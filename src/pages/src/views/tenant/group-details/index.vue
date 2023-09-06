@@ -112,6 +112,7 @@
 </template>
 
 <script setup lang="ts">
+import { Message } from 'bkui-vue';
 import moment from 'moment';
 import { computed, inject, reactive, ref, watch } from 'vue';
 
@@ -229,6 +230,7 @@ const handleClick = async (type: string, item?: any) => {
 };
 
 const handleCancelEdit = async () => {
+  window.changeInput = false;
   if (detailsConfig.type === 'add') {
     detailsConfig.isShow = false;
   } else {
@@ -276,9 +278,14 @@ const handleEnter = () => {
     });
 };
 // 更新租户列表
-const updateTenantsList = () => {
+const updateTenantsList = (text) => {
   detailsConfig.isShow = false;
+  window.changeInput = false;
   fetchTenantsList();
+  Message({
+    theme: 'success',
+    message: text,
+  });
 };
 
 const handleBeforeClose = async () => {
@@ -326,6 +333,7 @@ const handleBeforeClose = async () => {
           margin-right: 8px;
           border: 1px solid #C4C6CC;
           border-radius: 50%;
+          object-fit: contain;
         }
 
         .logo {
