@@ -181,5 +181,12 @@ class DataSourceTestConnectionOutputSLZ(serializers.Serializer):
     """数据源连通性测试"""
 
     error_message = serializers.CharField(help_text="错误信息")
-    user = serializers.CharField(help_text="用户")
-    department = serializers.CharField(help_text="部门")
+    user = RawDataSourceUserSLZ(help_text="用户")
+    department = RawDataSourceDepartmentSLZ(help_text="部门")
+
+
+class LocalDataSourceImportInputSLZ(serializers.Serializer):
+    """本地数据源导入"""
+
+    file = serializers.FileField(help_text="数据源用户信息文件（Excel 格式）")
+    overwrite = serializers.BooleanField(help_text="允许对同名用户覆盖更新")

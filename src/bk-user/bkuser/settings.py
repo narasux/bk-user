@@ -126,6 +126,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 WHITENOISE_STATIC_PREFIX = "/staticfiles/"
 # STATIC_URL 也可以是CDN地址
 STATIC_URL = env.str("STATIC_URL", SITE_URL + "staticfiles/")
+# Media files (excel, pdf, ...)
+MEDIA_ROOT = BASE_DIR / "media"
 
 # cookie
 SESSION_COOKIE_NAME = "bkuser_sessionid"
@@ -488,3 +490,9 @@ MAX_WEAK_PASSWD_COMBINATION_THRESHOLD = env.float("MAX_WEAK_PASSWD_COMBINATION_T
 GENERATE_RANDOM_PASSWORD_MAX_RETRIES = env.int("GENERATE_RANDOM_PASSWORD_MAX_RETRIES", 10)
 # zxcvbn 会对密码进行总体强度评估（score [0, 4]），建议限制不能使用评分低于 3 的密码
 MIN_ZXCVBN_PASSWORD_SCORE = env.int("MIN_ZXCVBN_PASSWORD_SCORE", 3)
+
+# 数据导出配置
+# 名称前缀规范：https://docs.qq.com/sheet/DTktLdUtmRldob21P?tab=uty37p&c=C3A0A0
+EXPORT_EXCEL_FILENAME_PREFIX = "bk_user_export"
+# 成员，组织信息导出模板
+EXPORT_ORG_TEMPLATE = MEDIA_ROOT / "excel/export_org_tmpl.xlsx"

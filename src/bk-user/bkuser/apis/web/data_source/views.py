@@ -8,7 +8,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+from django.conf import settings
 from django.db import transaction
+from django.utils.translation import gettext_lazy as _
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import generics, status
 from rest_framework.response import Response
@@ -26,10 +28,12 @@ from bkuser.apis.web.data_source.serializers import (
 )
 from bkuser.apis.web.mixins import CurrentUserTenantMixin
 from bkuser.apps.data_source.constants import DataSourceStatus
+from bkuser.apps.data_source.exporter import DataSourceOrgExporter
 from bkuser.apps.data_source.models import DataSource, DataSourcePlugin
 from bkuser.apps.data_source.plugins.constants import DATA_SOURCE_PLUGIN_CONFIG_SCHEMA_MAP
 from bkuser.apps.data_source.signals import post_create_data_source, post_update_data_source
 from bkuser.common.error_codes import error_codes
+from bkuser.common.response import convert_workbook_to_response
 from bkuser.common.views import ExcludePatchAPIViewMixin, ExcludePutAPIViewMixin
 
 
@@ -223,20 +227,38 @@ class DataSourceSwitchStatusApi(CurrentUserTenantMixin, ExcludePutAPIViewMixin, 
         return Response(DataSourceSwitchStatusOutputSLZ(instance={"status": data_source.status.value}).data)
 
 
-class DataSourceTemplateApi(generics.ListAPIView):
+class DataSourceTemplateApi(CurrentUserTenantMixin, generics.ListAPIView):
+    @swagger_auto_schema(
+        tags=["data_source"],
+        operation_description="下载数据源导入模板",
+        responses={status.HTTP_200_OK: "org_tmpl.xlsx"},
+    )
     def get(self, request, *args, **kwargs):
         """数据源导出模板"""
-        # TODO (su) 实现代码逻辑
-        return Response()
+        data_source = DataSource.objects.get(id=kwargs["id"])
+        if not data_source.is_local:
+            raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅本地数据源类型有提供导入模板"))
+
+        workbook = DataSourceOrgExporter(data_source).gen_template()
+        return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_tmpl.xlsx")
 
 
 class DataSourceExportApi(generics.ListAPIView):
     """本地数据源用户导出"""
 
+    @swagger_auto_schema(
+        tags=["data_source"],
+        operation_description="下载本地数据源用户数据",
+        responses={status.HTTP_200_OK: "org_data.xlsx"},
+    )
     def get(self, request, *args, **kwargs):
         """导出指定的本地数据源用户数据（Excel 格式）"""
-        # TODO (su) 实现代码逻辑，注意：仅本地数据源可以导出
-        return Response()
+        data_source = DataSource.objects.get(id=kwargs["id"])
+        if not data_source.is_local:
+            raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅能导出本地数据源数据"))
+
+        workbook = DataSourceOrgExporter(data_source).export()
+        return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_data.xlsx")
 
 
 class DataSourceImportApi(generics.CreateAPIView):
