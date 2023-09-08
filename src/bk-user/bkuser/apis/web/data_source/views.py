@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from bkuser.apis.web.data_source.serializers import (
     DataSourceCreateInputSLZ,
     DataSourceCreateOutputSLZ,
+    DataSourcePluginDefaultConfigOutputSLZ,
     DataSourcePluginOutputSLZ,
     DataSourceRetrieveOutputSLZ,
     DataSourceSearchInputSLZ,
@@ -32,6 +33,7 @@ from bkuser.apps.data_source.exporter import DataSourceOrgExporter
 from bkuser.apps.data_source.models import DataSource, DataSourcePlugin
 from bkuser.apps.data_source.plugins.constants import DATA_SOURCE_PLUGIN_CONFIG_SCHEMA_MAP
 from bkuser.apps.data_source.signals import post_create_data_source, post_update_data_source
+from bkuser.biz.data_source_plugin import DefaultPluginConfigProvider
 from bkuser.common.error_codes import error_codes
 from bkuser.common.response import convert_workbook_to_response
 from bkuser.common.views import ExcludePatchAPIViewMixin, ExcludePutAPIViewMixin
@@ -43,12 +45,29 @@ class DataSourcePluginListApi(generics.ListAPIView):
     serializer_class = DataSourcePluginOutputSLZ
 
     @swagger_auto_schema(
-        tags=["data_source"],
+        tags=["data_source_plugin"],
         operation_description="数据源插件列表",
         responses={status.HTTP_200_OK: DataSourcePluginOutputSLZ(many=True)},
     )
     def get(self, request, *args, **kwargs):
         return self.list(request, *args, **kwargs)
+
+
+class DataSourcePluginDefaultConfigApi(generics.RetrieveAPIView):
+    @swagger_auto_schema(
+        tags=["data_source_plugin"],
+        operation_description="数据源插件默认配置",
+        responses={
+            status.HTTP_200_OK: DataSourcePluginDefaultConfigOutputSLZ(),
+            **DATA_SOURCE_PLUGIN_CONFIG_SCHEMA_MAP,
+        },
+    )
+    def get(self, request, *args, **kwargs):
+        config = DefaultPluginConfigProvider().get(kwargs["id"])
+        if not config:
+            raise error_codes.DATA_SOURCE_PLUGIN_NOT_DEFAULT_CONFIG
+
+        return Response(DataSourcePluginDefaultConfigOutputSLZ(instance={"config": config.model_dump()}).data)
 
 
 class DataSourceListCreateApi(CurrentUserTenantMixin, generics.ListCreateAPIView):
