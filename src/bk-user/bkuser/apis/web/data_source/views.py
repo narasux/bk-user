@@ -258,7 +258,7 @@ class DataSourceTemplateApi(CurrentUserTenantMixin, generics.ListAPIView):
         if not data_source.is_local:
             raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅本地数据源类型有提供导入模板"))
 
-        workbook = DataSourceOrgExporter(data_source).gen_template()
+        workbook = DataSourceOrgExporter(data_source).get_template()
         return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_tmpl.xlsx")
 
 
