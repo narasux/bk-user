@@ -28,7 +28,7 @@ from bkuser.apps.data_source.models import (
 )
 
 
-class DataSourceOrgExporter:
+class DataSourceUserExporter:
     """导出数据源用户 & 组织信息"""
 
     workbook: Workbook
@@ -75,7 +75,7 @@ class DataSourceOrgExporter:
         self.sheet.alignment = Alignment(wrapText=True)
         # TODO (su) 支持在模版中补充动态字段
 
-        # 将单元格设置为纯文本模式，防止出现 DDE
+        # 将单元格设置为纯文本模式，防止出现类型转换
         for columns in self.sheet.columns:
             for cell in columns:
                 cell.number_format = FORMAT_TEXT
@@ -102,7 +102,7 @@ class DataSourceOrgExporter:
                 _build_by_recursive(child, ancestors[:])
 
         # 使用 cached_tree 避免在后续使用 get_children 时候触发 DB 查询
-        # 注：get_ascendants 无法使用 mptt 自带的缓存，暂时不考虑在查询部门组织信息时使用
+        # 注：get_ascendants 无法使用 mptt 自带的缓存，暂不考虑在查询部门组织信息时使用
         for rel in relations.get_cached_trees():
             _build_by_recursive(rel, [])
 

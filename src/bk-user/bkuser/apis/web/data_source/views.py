@@ -29,7 +29,7 @@ from bkuser.apis.web.data_source.serializers import (
 )
 from bkuser.apis.web.mixins import CurrentUserTenantMixin
 from bkuser.apps.data_source.constants import DataSourceStatus
-from bkuser.apps.data_source.exporter import DataSourceOrgExporter
+from bkuser.apps.data_source.exporter import DataSourceUserExporter
 from bkuser.apps.data_source.models import DataSource, DataSourcePlugin
 from bkuser.apps.data_source.plugins.constants import DATA_SOURCE_PLUGIN_CONFIG_SCHEMA_MAP
 from bkuser.apps.data_source.signals import post_create_data_source, post_update_data_source
@@ -247,6 +247,13 @@ class DataSourceSwitchStatusApi(CurrentUserTenantMixin, ExcludePutAPIViewMixin, 
 
 
 class DataSourceTemplateApi(CurrentUserTenantMixin, generics.ListAPIView):
+    """获取本地数据源数据导入模板"""
+
+    lookup_url_kwarg = "id"
+
+    def get_queryset(self):
+        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
+
     @swagger_auto_schema(
         tags=["data_source"],
         operation_description="下载数据源导入模板",
@@ -254,16 +261,22 @@ class DataSourceTemplateApi(CurrentUserTenantMixin, generics.ListAPIView):
     )
     def get(self, request, *args, **kwargs):
         """数据源导出模板"""
-        data_source = DataSource.objects.get(id=kwargs["id"])
+        # 获取数据源信息，用于后续填充模板中的动态字段
+        data_source = self.get_object()
         if not data_source.is_local:
             raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅本地数据源类型有提供导入模板"))
 
-        workbook = DataSourceOrgExporter(data_source).get_template()
+        workbook = DataSourceUserExporter(data_source).get_template()
         return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_tmpl.xlsx")
 
 
-class DataSourceExportApi(generics.ListAPIView):
+class DataSourceExportApi(CurrentUserTenantMixin, generics.ListAPIView):
     """本地数据源用户导出"""
+
+    lookup_url_kwarg = "id"
+
+    def get_queryset(self):
+        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
@@ -272,20 +285,35 @@ class DataSourceExportApi(generics.ListAPIView):
     )
     def get(self, request, *args, **kwargs):
         """导出指定的本地数据源用户数据（Excel 格式）"""
-        data_source = DataSource.objects.get(id=kwargs["id"])
+        data_source = self.get_object()
         if not data_source.is_local:
             raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅能导出本地数据源数据"))
 
-        workbook = DataSourceOrgExporter(data_source).export()
+        workbook = DataSourceUserExporter(data_source).export()
         return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_data.xlsx")
 
 
-class DataSourceImportApi(generics.CreateAPIView):
+class DataSourceImportApi(CurrentUserTenantMixin, generics.CreateAPIView):
     """从 Excel 导入数据源用户数据"""
 
+    lookup_url_kwarg = "id"
+
+    def get_queryset(self):
+        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
+
+    @swagger_auto_schema(
+        tags=["data_source"],
+        operation_description="本地数据源用户数据导入",
+        responses={status.HTTP_200_OK: ""},
+    )
     def post(self, request, *args, **kwargs):
         """从 Excel 导入数据源用户数据"""
-        # TODO (su) 实现代码逻辑，注意：仅本地数据源可以导入
+        data_source = self.get_object()
+        if not data_source.is_local:
+            raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅本地数据源支持导入功能"))
+
+        # TODO (su) 调用本地数据源插件，对 workbook 进行解析，构造出数据源用户数据
+
         return Response()
 
 
