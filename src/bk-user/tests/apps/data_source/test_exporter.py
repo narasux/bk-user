@@ -12,3 +12,9 @@ specific language governing permissions and limitations under the License.
 
 class TestDataSourceUserExporter:
     """TODO (su) 补充单元测试 初始化用户，组织，关系数据 -> 导出，匹配 workbook.sheet 内容"""
+
+    def test_get_template(self, full_local_data_source):
+        ...
+
+    def test_export(self, full_local_data_source):
+        ...
