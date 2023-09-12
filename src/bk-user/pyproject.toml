@@ -102,7 +102,9 @@ ignore = [
     # Avoid too many arguments
     "PLR0913",
     # Avoid too many return statements
-    "PLR0911"
+    "PLR0911",
+    # Exception should be named with `Error` suffix
+    "N818",
 ]
 # Same as Black.
 line-length = 119

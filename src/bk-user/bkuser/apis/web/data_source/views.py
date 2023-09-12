@@ -8,13 +8,18 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import logging
+
+import openpyxl
 from django.conf import settings
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from drf_yasg.utils import swagger_auto_schema
+from openpyxl.utils.exceptions import InvalidFileException
 from rest_framework import generics, status
 from rest_framework.response import Response
 
+from bkuser.apis.web.data_source.mixins import CurrentUserTenantDataSourceMixin
 from bkuser.apis.web.data_source.serializers import (
     DataSourceCreateInputSLZ,
     DataSourceCreateOutputSLZ,
@@ -26,6 +31,8 @@ from bkuser.apis.web.data_source.serializers import (
     DataSourceSwitchStatusOutputSLZ,
     DataSourceTestConnectionOutputSLZ,
     DataSourceUpdateInputSLZ,
+    LocalDataSourceImportInputSLZ,
+    LocalDataSourceImportOutputSLZ,
 )
 from bkuser.apis.web.mixins import CurrentUserTenantMixin
 from bkuser.apps.data_source.constants import DataSourceStatus
@@ -33,10 +40,15 @@ from bkuser.apps.data_source.exporter import DataSourceUserExporter
 from bkuser.apps.data_source.models import DataSource, DataSourcePlugin
 from bkuser.apps.data_source.plugins.constants import DATA_SOURCE_PLUGIN_CONFIG_SCHEMA_MAP
 from bkuser.apps.data_source.signals import post_create_data_source, post_update_data_source
+from bkuser.apps.sync.constants import SyncTaskTrigger
+from bkuser.apps.sync.data_models import DataSourceSyncOptions
+from bkuser.apps.sync.manager import DataSourceSyncManager
 from bkuser.biz.data_source_plugin import DefaultPluginConfigProvider
 from bkuser.common.error_codes import error_codes
 from bkuser.common.response import convert_workbook_to_response
 from bkuser.common.views import ExcludePatchAPIViewMixin, ExcludePutAPIViewMixin
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourcePluginListApi(generics.ListAPIView):
@@ -131,13 +143,11 @@ class DataSourceListCreateApi(CurrentUserTenantMixin, generics.ListCreateAPIView
         )
 
 
-class DataSourceRetrieveUpdateApi(CurrentUserTenantMixin, ExcludePatchAPIViewMixin, generics.RetrieveUpdateAPIView):
+class DataSourceRetrieveUpdateApi(
+    CurrentUserTenantDataSourceMixin, ExcludePatchAPIViewMixin, generics.RetrieveUpdateAPIView
+):
     pagination_class = None
     serializer_class = DataSourceRetrieveOutputSLZ
-    lookup_url_kwarg = "id"
-
-    def get_queryset(self):
-        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
@@ -179,14 +189,10 @@ class DataSourceRetrieveUpdateApi(CurrentUserTenantMixin, ExcludePatchAPIViewMix
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class DataSourceTestConnectionApi(CurrentUserTenantMixin, generics.RetrieveAPIView):
+class DataSourceTestConnectionApi(CurrentUserTenantDataSourceMixin, generics.RetrieveAPIView):
     """数据源连通性测试"""
 
     serializer_class = DataSourceTestConnectionOutputSLZ
-    lookup_url_kwarg = "id"
-
-    def get_queryset(self):
-        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
@@ -219,14 +225,10 @@ class DataSourceTestConnectionApi(CurrentUserTenantMixin, generics.RetrieveAPIVi
         return Response(DataSourceTestConnectionOutputSLZ(instance=mock_data).data)
 
 
-class DataSourceSwitchStatusApi(CurrentUserTenantMixin, ExcludePutAPIViewMixin, generics.UpdateAPIView):
+class DataSourceSwitchStatusApi(CurrentUserTenantDataSourceMixin, ExcludePutAPIViewMixin, generics.UpdateAPIView):
     """切换数据源状态（启/停）"""
 
     serializer_class = DataSourceSwitchStatusOutputSLZ
-    lookup_url_kwarg = "id"
-
-    def get_queryset(self):
-        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
@@ -246,13 +248,8 @@ class DataSourceSwitchStatusApi(CurrentUserTenantMixin, ExcludePutAPIViewMixin, 
         return Response(DataSourceSwitchStatusOutputSLZ(instance={"status": data_source.status.value}).data)
 
 
-class DataSourceTemplateApi(CurrentUserTenantMixin, generics.ListAPIView):
+class DataSourceTemplateApi(CurrentUserTenantDataSourceMixin, generics.ListAPIView):
     """获取本地数据源数据导入模板"""
-
-    lookup_url_kwarg = "id"
-
-    def get_queryset(self):
-        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
@@ -270,13 +267,8 @@ class DataSourceTemplateApi(CurrentUserTenantMixin, generics.ListAPIView):
         return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_tmpl.xlsx")
 
 
-class DataSourceExportApi(CurrentUserTenantMixin, generics.ListAPIView):
+class DataSourceExportApi(CurrentUserTenantDataSourceMixin, generics.ListAPIView):
     """本地数据源用户导出"""
-
-    lookup_url_kwarg = "id"
-
-    def get_queryset(self):
-        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
@@ -293,28 +285,45 @@ class DataSourceExportApi(CurrentUserTenantMixin, generics.ListAPIView):
         return convert_workbook_to_response(workbook, f"{settings.EXPORT_EXCEL_FILENAME_PREFIX}_org_data.xlsx")
 
 
-class DataSourceImportApi(CurrentUserTenantMixin, generics.CreateAPIView):
+class DataSourceImportApi(CurrentUserTenantDataSourceMixin, generics.CreateAPIView):
     """从 Excel 导入数据源用户数据"""
-
-    lookup_url_kwarg = "id"
-
-    def get_queryset(self):
-        return DataSource.objects.filter(owner_tenant_id=self.get_current_tenant_id())
 
     @swagger_auto_schema(
         tags=["data_source"],
         operation_description="本地数据源用户数据导入",
-        responses={status.HTTP_200_OK: ""},
+        request_body=LocalDataSourceImportInputSLZ(),
+        responses={status.HTTP_200_OK: LocalDataSourceImportOutputSLZ()},
     )
     def post(self, request, *args, **kwargs):
         """从 Excel 导入数据源用户数据"""
+        slz = LocalDataSourceImportInputSLZ(data=request.data)
+        slz.is_valid(raise_exception=True)
+        data = slz.validated_data
+
         data_source = self.get_object()
         if not data_source.is_local:
             raise error_codes.DATA_SOURCE_OPERATION_UNSUPPORTED.f(_("仅本地数据源支持导入功能"))
 
-        # TODO (su) 调用本地数据源插件，对 workbook 进行解析，构造出数据源用户数据
+        # Request file 转换成 openpyxl.workbook
+        try:
+            workbook = openpyxl.load_workbook(data["file"])
+        except InvalidFileException:
+            logger.exception("本地数据源导入失败")
+            raise error_codes.DATA_SOURCE_IMPORT_FAILED.f(_("文件格式异常"))
 
-        return Response()
+        options = DataSourceSyncOptions(
+            operator=request.user.username,
+            overwrite=data["overwrite"],
+            async_run=False,
+            trigger=SyncTaskTrigger.MANUAL,
+        )
+
+        task = DataSourceSyncManager(data_source, options).execute(context={"workbook": workbook})
+        return Response(
+            LocalDataSourceImportOutputSLZ(
+                instance={"task_id": task.id, "status": task.status, "summary": task.summary}
+            ).data
+        )
 
 
 class DataSourceSyncApi(generics.CreateAPIView):

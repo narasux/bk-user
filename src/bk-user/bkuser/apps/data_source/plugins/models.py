@@ -34,7 +34,7 @@ class RawDataSourceDepartment(BaseModel):
     # 部门名称
     name: str
     # 上级部门
-    parent: str
+    parent: str | None
 
 
 class TestConnectionResult(BaseModel):

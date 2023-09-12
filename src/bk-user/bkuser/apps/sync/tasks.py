@@ -8,13 +8,16 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.http import HttpResponse
-from openpyxl.workbook import Workbook
+from typing import Any, Dict
+
+from celery import shared_task
+
+from bkuser.apps.sync.models import DataSourceSyncTask
+from bkuser.apps.sync.runners import DataSourceSyncTaskRunner
 
 
-def convert_workbook_to_response(workbook: Workbook, filename: str) -> HttpResponse:
-    """将工作簿转换为响应"""
-    response = HttpResponse(content_type="application/ms-excel")
-    response["Content-Disposition"] = f"attachment;filename={filename}"
-    workbook.save(response)
-    return response
+@shared_task(ignore_result=True)
+def sync_data_source(task_id: int, context: Dict[str, Any]):
+    """同步数据源数据"""
+    task = DataSourceSyncTask.objects.get(id=task_id)
+    DataSourceSyncTaskRunner(task, context).run()

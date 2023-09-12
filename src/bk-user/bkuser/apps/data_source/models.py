@@ -10,6 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 import uuid
 
+from blue_krill.models.fields import EncryptField
 from django.conf import settings
 from django.db import models
 from mptt.models import MPTTModel, TreeForeignKey
@@ -90,7 +91,7 @@ class LocalDataSourceIdentityInfo(TimestampedModel):
     """
 
     user = models.OneToOneField(DataSourceUser, on_delete=models.CASCADE)
-    password = models.CharField("用户密码", null=True, blank=True, default="", max_length=255)
+    password = EncryptField("用户密码", null=True, blank=True, default="", max_length=255)
     password_updated_at = models.DateTimeField("密码最后更新时间", null=True, blank=True)
     password_expired_at = models.DateTimeField("密码过期时间", null=True, blank=True)
 

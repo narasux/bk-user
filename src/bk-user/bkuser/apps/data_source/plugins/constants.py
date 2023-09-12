@@ -11,7 +11,13 @@ specific language governing permissions and limitations under the License.
 
 from bkuser.apps.data_source.constants import DataSourcePluginEnum
 from bkuser.apps.data_source.plugins.local.models import LocalDataSourcePluginConfig
+from bkuser.apps.data_source.plugins.local.plugin import LocalDataSourcePlugin
 from bkuser.utils.pydantic import gen_openapi_schema
+
+# 数据源插件类映射表
+DATA_SOURCE_PLUGIN_CLASS_MAP = {
+    DataSourcePluginEnum.LOCAL: LocalDataSourcePlugin,
+}
 
 # 数据源插件配置类映射表
 DATA_SOURCE_PLUGIN_CONFIG_CLASS_MAP = {

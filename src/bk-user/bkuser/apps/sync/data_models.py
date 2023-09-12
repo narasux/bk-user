@@ -8,17 +8,19 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+from pydantic import BaseModel
 
-# TODO (su) Poller 会基于 blue-krill 的能力，提供各类同步任务
-
-
-class DataSourceSyncTaskPoller:
-    """数据源同步任务上下文管理器"""
-
-    ...
+from bkuser.apps.sync.constants import SyncTaskTrigger
 
 
-class TenantSyncTaskPoller:
-    """租户同步任务上下文管理器"""
+class DataSourceSyncOptions(BaseModel):
+    """数据源同步选项"""
 
-    ...
+    # 同步操作人，定时触发时为空
+    operator: str = ""
+    # 是否对同名用户覆盖更新
+    overwrite: bool = False
+    # 是否异步执行同步任务
+    async_run: bool = True
+    # 同步任务触发方式
+    trigger: SyncTaskTrigger = SyncTaskTrigger.CRONTAB

@@ -18,13 +18,13 @@ class BaseDataSourcePlugin(ABC):
     """数据源插件基类"""
 
     @abstractmethod
-    def fetch_departments(self) -> List[RawDataSourceDepartment]:
-        """获取部门信息"""
+    def fetch_users(self) -> List[RawDataSourceUser]:
+        """获取用户信息"""
         ...
 
     @abstractmethod
-    def fetch_users(self) -> List[RawDataSourceUser]:
-        """获取用户信息"""
+    def fetch_departments(self) -> List[RawDataSourceDepartment]:
+        """获取部门信息"""
         ...
 
     @abstractmethod

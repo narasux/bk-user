@@ -8,11 +8,179 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+from collections import Counter
+from hashlib import sha256
+from typing import List
+
+import phonenumbers
+from django.conf import settings
+from django.utils.translation import gettext_lazy as _
+from openpyxl.workbook import Workbook
+
+from bkuser.apps.data_source.plugins.local.exceptions import (
+    CustomColumnNameInvalid,
+    DuplicateColumnName,
+    DuplicateUsername,
+    SheetColumnsNotMatch,
+    UserSheetNotExists,
+)
+from bkuser.apps.data_source.plugins.models import RawDataSourceDepartment, RawDataSourceUser
 
 
 class LocalDataSourceDataParser:
     """本地数据源数据解析器"""
 
-    # TODO (su) 从 excel 中读取用户，部门，leader 等信息，转换成需要的格式
+    # 用户表名称
+    user_sheet_name = "users"
+    # 第一行是填写必读，第二行才是列名
+    col_name_row_idx = 2
+    # 第三行开始，才是用户数据
+    user_data_min_row_idx = 3
+    # 用户名列索引
+    username_col_idx = 0
+    # 组织列索引
+    org_col_idx = 4
 
-    ...
+    # 内建字段列名
+    builtin_col_names = [
+        "用户名/username",
+        "姓名/full_name",
+        "邮箱/email",
+        "手机号/phone_number",
+        "组织/organizations",
+        "直接上级/leaders",
+    ]
+    # 内建字段列长度
+    builtin_col_length = len(builtin_col_names)
+
+    # NOTE 下列字段在加载到 workbook 后填充
+    # 自定义字段列名
+    custom_col_names: List[str] = []
+    # 完整的字段列名 = 内建字段列名 + 动态字段列名
+    all_col_names: List[str] = []
+    # 完整的字段名称
+    all_field_names: List[str] = []
+
+    # 必填字段列名，自定义必填字段不在解析器中校验
+    required_field_names = [
+        "username",
+        "full_name",
+        "email",
+        "phone_number",
+        "organizations",
+    ]
+
+    def __init__(self, workbook: Workbook):
+        self.workbook = workbook
+        self.departments: List[RawDataSourceDepartment] = []
+        self.users: List[RawDataSourceUser] = []
+
+    def parse(self):
+        """预解析部门 & 用户数据"""
+        self._validate_and_prepare()
+        self._parse_users()
+        self._parse_departments()
+
+    def get_users(self) -> List[RawDataSourceUser]:
+        return self.users
+
+    def get_departments(self) -> List[RawDataSourceDepartment]:
+        return self.departments
+
+    def _validate_and_prepare(self):
+        """检查表格格式，确保后续可正常解析"""
+        # 1. 确保用户表确实存在
+        if self.user_sheet_name not in self.workbook.sheetnames:
+            raise UserSheetNotExists(_("待导入文件中不存在用户表"))
+
+        self.sheet = self.workbook[self.user_sheet_name]
+
+        # 2. 检查表头是否正确
+        sheet_col_names = [cell.value for cell in self.sheet[self.col_name_row_idx]]
+        # 前 N 个是内建字段，必须存在
+        builtin_col_length = len(self.builtin_col_names)
+        if sheet_col_names[:builtin_col_length] != self.builtin_col_names:
+            raise SheetColumnsNotMatch(_("待导入文件中用户表格式异常"))
+
+        # N 个之后，是可能存在的动态字段
+        self.custom_col_names = sheet_col_names[builtin_col_length:]
+        self.all_col_names = self.builtin_col_names + self.custom_col_names
+
+        # 3. 检查自定义字段是否符合格式，格式：display_name/field_name
+        for col_name in self.custom_col_names:
+            display_name, __, field_name = col_name.partition("/")
+            if not (display_name and field_name):
+                raise CustomColumnNameInvalid(_("动态字段 {} 格式不合法，参考格式：年龄/age").format(col_name))
+
+        # 获取所有的字段名
+        self.all_field_names = [n.split("/")[-1] for n in self.all_col_names]
+
+        # 4. 检查是否有重复列
+        if duplicate_col_names := [n for n, cnt in Counter(sheet_col_names).items() if cnt > 1]:
+            raise DuplicateColumnName(_("待导入文件中存在重复列名：{}").format(", ".join(duplicate_col_names)))
+
+        # 5. 检查所有必填字段是否有值
+        for row in self.sheet.iter_rows(min_row=self.user_data_min_row_idx):
+            info = dict(zip(self.all_field_names, [cell.value for cell in row]))
+            for field_name in self.required_field_names:
+                if not info.get(field_name):
+                    raise ValueError(_("待导入文件中必填字段 {} 存在空值").format(field_name))
+
+        # 6. 检查用户名是否有重复的
+        usernames = [
+            row[self.username_col_idx].value for row in self.sheet.iter_rows(min_row=self.user_data_min_row_idx)
+        ]
+        if duplicate_usernames := [n for n, cnt in Counter(usernames).items() if cnt > 1]:
+            raise DuplicateUsername(_("待导入文件中存在重复用户名：{}").format(", ".join(duplicate_usernames)))
+
+    def _parse_users(self):
+        for row in self.sheet.iter_rows(min_row=self.user_data_min_row_idx):
+            properties = dict(zip(self.all_field_names, [cell.value for cell in row]))
+
+            department_ids, leader_ids = [], []
+            if organizations := properties.pop("organizations"):
+                department_ids = [self.gen_id(org.strip()) for org in organizations.split(",")]
+
+            if leaders := properties.pop("leaders"):
+                leader_ids = [self.gen_id(leader.strip()) for leader in leaders.split(",")]
+
+            phone_number = str(properties.pop("phone_number"))
+            # 默认认为是不带国际代码的
+            phone, country_code = phone_number, settings.DEFAULT_PHONE_COUNTRY_CODE
+            if phone_number.startswith("+"):
+                ret = phonenumbers.parse(phone_number)
+                phone, country_code = str(ret.national_number), str(ret.country_code)
+
+            properties.update({"phone": phone, "phone_country_code": country_code})
+
+            # 格式化，将所有非 None 字段都转成 str 类型
+            properties = {k: str(v) for k, v in properties.items() if v is not None}
+            self.users.append(
+                RawDataSourceUser(
+                    id=self.gen_id(properties["username"]),
+                    properties=properties,
+                    leaders=leader_ids,
+                    departments=department_ids,
+                )
+            )
+
+    def _parse_departments(self):
+        organizations = set()
+        for row in self.sheet.iter_rows(min_row=self.user_data_min_row_idx):
+            if user_orgs := row[self.org_col_idx].value:
+                for org in user_orgs.split(","):
+                    organizations.add(org.strip())
+
+        # 组织路径：本数据源部门 ID 映射表
+        org_id_map = {org: self.gen_id(org) for org in organizations}
+        for org in organizations:
+            parent_org, __, dept_name = org.rpartition("/")
+            self.departments.append(
+                RawDataSourceDepartment(id=org_id_map[org], name=dept_name, parent=org_id_map.get(parent_org))
+            )
+
+    @staticmethod
+    def gen_id(username_or_org: str) -> str:
+        # 本地数据源组织没有提供用户 ID(user_id) 及部门 ID(code) 的方式，
+        # 因此使用 sha256 计算以避免冲突，也便于后续插入 DB 时进行比较
+        return sha256(username_or_org.encode("utf-8")).hexdigest()

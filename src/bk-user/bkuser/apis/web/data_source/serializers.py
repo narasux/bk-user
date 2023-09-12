@@ -193,4 +193,12 @@ class LocalDataSourceImportInputSLZ(serializers.Serializer):
     """本地数据源导入"""
 
     file = serializers.FileField(help_text="数据源用户信息文件（Excel 格式）")
-    overwrite = serializers.BooleanField(help_text="允许对同名用户覆盖更新")
+    overwrite = serializers.BooleanField(help_text="允许对同名用户覆盖更新", default=False)
+
+
+class LocalDataSourceImportOutputSLZ(serializers.Serializer):
+    """本地数据源导入结果"""
+
+    task_id = serializers.CharField(help_text="任务 ID")
+    status = serializers.CharField(help_text="任务状态")
+    summary = serializers.CharField(help_text="任务执行结果概述")

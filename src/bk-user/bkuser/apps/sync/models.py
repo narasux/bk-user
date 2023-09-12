@@ -28,11 +28,19 @@ class DataSourceSyncTask(TimestampedModel):
     """数据源同步任务"""
 
     data_source_id = models.IntegerField("数据源 ID")
-    status = models.CharField("任务总状态", choices=SyncTaskStatus.get_choices(), max_length=32)
+    status = models.CharField(
+        "任务总状态", choices=SyncTaskStatus.get_choices(), default=SyncTaskStatus.PENDING, max_length=32
+    )
     trigger = models.CharField("触发方式", choices=SyncTaskTrigger.get_choices(), max_length=32)
     operator = models.CharField("操作人", null=True, blank=True, default="", max_length=128)
     start_time = models.DateTimeField("任务开始时间")
     duration = models.DurationField("任务持续时间")
+    extra = models.JSONField("扩展信息", default=dict)
+
+    @property
+    def summary(self):
+        # TODO 支持获取任务总结
+        return "TODO"
 
 
 class DataSourceSyncStep(TimestampedModel):

@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 import environ
 import urllib3
+from django.utils.encoding import force_bytes
 
 # environ
 env = environ.Env()
@@ -157,6 +158,15 @@ BK_APP_CODE = env.str("BK_APP_CODE", default="bkuser")
 BK_APP_SECRET = env.str("BK_APP_SECRET")
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = BK_APP_SECRET
+
+# 蓝鲸数据库内容加密私钥
+# 使用 `from cryptography.fernet import Fernet; Fernet.generate_key()` 生成随机秘钥
+# 详情查看：https://cryptography.io/en/latest/fernet/
+BKKRILL_ENCRYPT_SECRET_KEY = force_bytes(env.str("BKKRILL_ENCRYPT_SECRET_KEY"))
+
+# 选择加密数据库内容的算法，可选值：SHANGMI, CLASSIC
+BK_CRYPTO_TYPE = env.str("BK_CRYPTO_TYPE", "CLASSIC")
+ENCRYPT_CIPHER_TYPE = "SM4CTR" if BK_CRYPTO_TYPE == "SHANGMI" else "FernetCipher"
 
 # bk_language domain
 BK_DOMAIN = env.str("BK_DOMAIN", default="")

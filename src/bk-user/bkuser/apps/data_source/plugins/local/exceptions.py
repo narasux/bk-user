@@ -8,13 +8,28 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.http import HttpResponse
-from openpyxl.workbook import Workbook
+from bkuser.apps.data_source.plugins.exceptions import BaseDataSourcePluginError
 
 
-def convert_workbook_to_response(workbook: Workbook, filename: str) -> HttpResponse:
-    """将工作簿转换为响应"""
-    response = HttpResponse(content_type="application/ms-excel")
-    response["Content-Disposition"] = f"attachment;filename={filename}"
-    workbook.save(response)
-    return response
+class LocalDataSourcePluginError(BaseDataSourcePluginError):
+    """本地数据源插件基础异常"""
+
+
+class UserSheetNotExists(LocalDataSourcePluginError):
+    """待导入文件中不存在用户表"""
+
+
+class SheetColumnsNotMatch(LocalDataSourcePluginError):
+    """待导入文件中用户表列不匹配"""
+
+
+class CustomColumnNameInvalid(LocalDataSourcePluginError):
+    """待导入文件中动态字段列名不合法"""
+
+
+class DuplicateColumnName(LocalDataSourcePluginError):
+    """待导入文件中存在重复列名"""
+
+
+class DuplicateUsername(LocalDataSourcePluginError):
+    """待导入文件中存在重复用户"""

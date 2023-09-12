@@ -81,6 +81,7 @@ class ErrorCodes:
     CANNOT_CREATE_DATA_SOURCE_USER = ErrorCode(_("该数据源不支持新增用户"))
     CANNOT_UPDATE_DATA_SOURCE_USER = ErrorCode(_("该数据源不支持更新用户"))
     DATA_SOURCE_USER_ALREADY_EXISTED = ErrorCode(_("数据源用户已存在"))
+    DATA_SOURCE_IMPORT_FAILED = ErrorCode(_("数据源导入失败"))
 
     # 租户
     CREATE_TENANT_FAILED = ErrorCode(_("租户创建失败"))
