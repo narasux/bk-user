@@ -82,7 +82,8 @@ class ErrorCodes:
     DATA_SOURCE_NOT_EXISTS = ErrorCode(_("数据源不存在或已删除"))
     DATA_SOURCE_DELETE_FAILED = ErrorCode(_("数据源删除失败"))
     DATA_SOURCE_USER_CREATE_FAILED = ErrorCode(_("该数据源不支持新增用户"))
-    DATA_SOURCE_USER_UPDATE_FAILED = ErrorCode(_("该数据源不支持更新用户"))
+    DATA_SOURCE_USER_UPDATE_FAILED = ErrorCode(_("该数据源用户不支持更新"))
+    DATA_SOURCE_USER_DELETE_FAILED = ErrorCode(_("该数据源用户不支持删除"))
     DATA_SOURCE_USER_ALREADY_EXISTED = ErrorCode(_("数据源用户已存在"))
     DATA_SOURCE_SYNC_TASK_CREATE_FAILED = ErrorCode(_("创建数据源同步任务失败"))
 

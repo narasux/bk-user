@@ -13,22 +13,40 @@ from django.urls import path
 from bkuser.apis.web.data_source_organization import views
 
 urlpatterns = [
-    # 数据源用户
+    # 数据源用户列表
     path("<int:id>/users/", views.DataSourceUserListCreateApi.as_view(), name="data_source_user.list_create"),
-    # 数据源用户 Leader
+    # 获取数据源用户用于 Leader 下拉框
     path("<int:id>/leaders/", views.DataSourceLeadersListApi.as_view(), name="data_source_leader.list"),
-    # 数据源部门
+    # 获取数据源部门用户部门下拉框
     path("<int:id>/departments/", views.DataSourceDepartmentsListApi.as_view(), name="data_source_department.list"),
-    path("users/<int:id>/", views.DataSourceUserRetrieveUpdateApi.as_view(), name="data_source_user.retrieve_update"),
+    # 数据源用户
+    path(
+        "users/<int:id>/",
+        views.DataSourceUserRetrieveUpdateDestroyApi.as_view(),
+        name="data_source_user.retrieve_update_destroy",
+    ),
+    # 切换数据源用户状态（启/停）
+    path(
+        "users/<int:id>/operations/switch_status/",
+        views.DataSourceUserSwitchStatusApi.as_view(),
+        name="data_source_user.switch_status",
+    ),
+    # 重置本地数据源用户密码（租户管理员操作）
     path(
         "users/<int:id>/password/",
         views.DataSourceUserPasswordResetApi.as_view(),
         name="data_source_user.password.reset",
     ),
-    # 数据源用户所属部门路径
+    # 获取数据源用户所属部门组织路径
     path(
         "users/<int:id>/organization-paths/",
         views.DataSourceUserOrganizationPathListApi.as_view(),
         name="data_source_user.organization_path.list",
+    ),
+    # 切换数据源部门状态（启/停）
+    path(
+        "departments/<int:id>/operations/switch_status/",
+        views.DataSourceDepartmentSwitchStatusApi.as_view(),
+        name="data_source_department.switch_status",
     ),
 ]

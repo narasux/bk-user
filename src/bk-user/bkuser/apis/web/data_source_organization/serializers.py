@@ -331,3 +331,11 @@ class DataSourceUserPasswordResetInputSLZ(serializers.Serializer):
 
 class DataSourceUserOrganizationPathOutputSLZ(serializers.Serializer):
     organization_paths = serializers.ListField(help_text="数据源用户所属部门路径列表", child=serializers.CharField())
+
+
+class DataSourceUserSwitchStatusOutputSLZ(serializers.Serializer):
+    status = serializers.CharField(help_text="数据源用户状态")
+
+
+class DataSourceDepartmentSwitchStatusOutputSLZ(serializers.Serializer):
+    status = serializers.CharField(help_text="数据源部门状态")

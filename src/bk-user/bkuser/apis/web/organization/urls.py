@@ -27,6 +27,18 @@ urlpatterns = [
     ),
     # 租户部门下用户
     path("departments/<int:id>/users/", views.TenantDepartmentUserListApi.as_view(), name="departments.users.list"),
+    # 切换租户部门状态（启/停）
+    path(
+        "departments/<int:id>/operations/switch_status/",
+        views.TenantDepartmentSwitchStatusApi.as_view(),
+        name="departments.switch_status",
+    ),
     # 租户用户详情
-    path("users/<str:id>/", views.TenantUserRetrieveApi.as_view(), name="department.users.retrieve"),
+    path("users/<str:id>/", views.TenantUserRetrieveApi.as_view(), name="tenant_users.retrieve"),
+    # 切换租户用户状态（启/停）
+    path(
+        "users/<int:id>/operations/switch_status/",
+        views.TenantUserSwitchStatusApi.as_view(),
+        name="tenant_users.switch_status",
+    ),
 ]

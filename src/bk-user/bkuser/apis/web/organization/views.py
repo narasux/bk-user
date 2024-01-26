@@ -12,6 +12,7 @@ import logging
 from collections import defaultdict
 
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import generics, status
@@ -21,18 +22,20 @@ from rest_framework.response import Response
 from bkuser.apis.web.mixins import CurrentUserTenantMixin
 from bkuser.apis.web.organization.serializers import (
     TenantDepartmentChildrenListOutputSLZ,
+    TenantDepartmentSwitchStatusOutputSLZ,
     TenantDepartmentUserSearchInputSLZ,
     TenantListOutputSLZ,
     TenantUserListOutputSLZ,
     TenantUserRetrieveOutputSLZ,
     TenantUserSearchInputSLZ,
+    TenantUserSwitchStatusOutputSLZ,
 )
 from bkuser.apis.web.tenant.serializers import TenantRetrieveOutputSLZ, TenantUpdateInputSLZ
 from bkuser.apps.data_source.constants import DataSourceStatus
 from bkuser.apps.data_source.models import DataSource, DataSourceDepartmentRelation, DataSourceDepartmentUserRelation
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
-from bkuser.apps.tenant.constants import TenantStatus
+from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantDepartment, TenantUser
 from bkuser.biz.data_source import DataSourceHandler
 from bkuser.biz.data_source_organization import DataSourceDepartmentHandler
@@ -44,7 +47,7 @@ from bkuser.biz.tenant import (
     TenantUserHandler,
 )
 from bkuser.common.error_codes import error_codes
-from bkuser.common.views import ExcludePatchAPIViewMixin
+from bkuser.common.views import ExcludePatchAPIViewMixin, ExcludePutAPIViewMixin
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +267,34 @@ class TenantDepartmentUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
         return self.get_paginated_response(TenantUserListOutputSLZ(tenant_users, many=True, context=context).data)
 
 
+class TenantDepartmentSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
+    """切换租户部门状态（启/停）"""
+
+    queryset = TenantDepartment.objects.filter(
+        status__in=[TenantDepartmentStatus.ENABLED, TenantDepartmentStatus.DISABLED]
+    )
+    lookup_url_kwarg = "id"
+    permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
+    serializer_class = TenantDepartmentSwitchStatusOutputSLZ
+
+    @swagger_auto_schema(
+        tags=["tenant-organization"],
+        operation_description="变更租户部门状态",
+        responses={status.HTTP_200_OK: TenantDepartmentSwitchStatusOutputSLZ()},
+    )
+    def patch(self, request, *args, **kwargs):
+        tenant_dept = self.get_object()
+        tenant_dept.status = (
+            TenantDepartmentStatus.DISABLED
+            if tenant_dept.status == TenantDepartmentStatus.ENABLED
+            else TenantDepartmentStatus.ENABLED
+        )
+        tenant_dept.updater = request.user.username
+        tenant_dept.save(update_fields=["status", "updater", "updated_at"])
+
+        return Response(TenantDepartmentSwitchStatusOutputSLZ(instance={"status": tenant_dept.status.value}).data)
+
+
 class TenantUserRetrieveApi(generics.RetrieveAPIView):
     queryset = TenantUser.objects.all()
     lookup_url_kwarg = "id"
@@ -277,3 +308,36 @@ class TenantUserRetrieveApi(generics.RetrieveAPIView):
     )
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
+
+
+class TenantUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
+    """切换租户用户状态（启/停）"""
+
+    queryset = TenantUser.objects.filter(
+        status__in=[TenantUserStatus.ENABLED, TenantUserStatus.DISABLED, TenantUserStatus.EXPIRED]
+    )
+    lookup_url_kwarg = "id"
+    permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
+    serializer_class = TenantUserSwitchStatusOutputSLZ
+
+    @swagger_auto_schema(
+        tags=["tenant-organization"],
+        operation_description="变更租户用户状态",
+        responses={status.HTTP_200_OK: TenantUserSwitchStatusOutputSLZ()},
+    )
+    def patch(self, request, *args, **kwargs):
+        tenant_user = self.get_object()
+        # 正常 / 过期的租户用户都可以停用
+        if tenant_user.status in [TenantUserStatus.ENABLED, TenantUserStatus.EXPIRED]:
+            tenant_user.status = TenantUserStatus.DISABLED
+        # 启用的时候需要根据租户有效期判断，如果过期则转换为过期，否则转换为正常
+        elif tenant_user.status == TenantUserStatus.DISABLED:
+            if timezone.now() > tenant_user.account_expired_at:
+                tenant_user.status = TenantUserStatus.EXPIRED
+            else:
+                tenant_user.status = TenantUserStatus.ENABLED
+
+        tenant_user.updater = request.user.username
+        tenant_user.save(update_fields=["status", "updater", "updated_at"])
+
+        return Response(TenantUserSwitchStatusOutputSLZ(instance={"status": tenant_user.status.value}).data)
