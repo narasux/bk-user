@@ -103,7 +103,3 @@ class TenantDepartmentChildrenListOutputSLZ(serializers.Serializer):
 
 class TenantUserSwitchStatusOutputSLZ(serializers.Serializer):
     status = serializers.CharField(help_text="租户用户状态")
-
-
-class TenantDepartmentSwitchStatusOutputSLZ(serializers.Serializer):
-    status = serializers.CharField(help_text="租户部门状态")

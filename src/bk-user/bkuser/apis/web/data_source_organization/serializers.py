@@ -335,7 +335,3 @@ class DataSourceUserOrganizationPathOutputSLZ(serializers.Serializer):
 
 class DataSourceUserSwitchStatusOutputSLZ(serializers.Serializer):
     status = serializers.CharField(help_text="数据源用户状态")
-
-
-class DataSourceDepartmentSwitchStatusOutputSLZ(serializers.Serializer):
-    status = serializers.CharField(help_text="数据源部门状态")

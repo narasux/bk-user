@@ -20,7 +20,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from bkuser.apis.web.data_source_organization.serializers import (
-    DataSourceDepartmentSwitchStatusOutputSLZ,
     DataSourceUserOrganizationPathOutputSLZ,
     DataSourceUserPasswordResetInputSLZ,
     DataSourceUserSwitchStatusOutputSLZ,
@@ -46,8 +45,8 @@ from bkuser.apps.data_source.models import (
 from bkuser.apps.notification.tasks import send_reset_password_to_user
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
-from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantUserStatus
-from bkuser.apps.tenant.models import TenantDepartment, TenantUser
+from bkuser.apps.tenant.constants import TenantUserStatus
+from bkuser.apps.tenant.models import TenantUser
 from bkuser.biz.data_source_organization import (
     DataSourceUserEditableInfo,
     DataSourceUserHandler,
@@ -297,7 +296,7 @@ class DataSourceUserRetrieveUpdateDestroyApi(
 
 
 class DataSourceUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
-    """切换数据源用户状态（启/停  ）"""
+    """切换数据源用户状态（启/停）"""
 
     queryset = DataSourceUser.objects.filter(status__in=[DataSourceUserStatus.ENABLED, DataSourceUserStatus.DISABLED])
     lookup_url_kwarg = "id"
@@ -404,59 +403,3 @@ class DataSourceUserOrganizationPathListApi(generics.ListAPIView):
             organization_paths.append("/".join(dept_names))
 
         return Response(DataSourceUserOrganizationPathOutputSLZ({"organization_paths": organization_paths}).data)
-
-
-class DataSourceDepartmentSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
-    """切换数据源部门状态（启/停）"""
-
-    queryset = DataSourceDepartment.objects.filter(
-        status__in=[DataSourceUserStatus.ENABLED, DataSourceUserStatus.DISABLED]
-    )
-    lookup_url_kwarg = "id"
-    permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
-    serializer_class = DataSourceDepartmentSwitchStatusOutputSLZ
-
-    @swagger_auto_schema(
-        tags=["data_source_organization"],
-        operation_description="变更数据源部门状态",
-        responses={status.HTTP_200_OK: DataSourceDepartmentSwitchStatusOutputSLZ()},
-    )
-    def patch(self, request, *args, **kwargs):
-        dept = self.get_object()
-        dept.status = (
-            DataSourceDepartmentStatus.DISABLED
-            if dept.status == DataSourceDepartmentStatus.ENABLED
-            else DataSourceDepartmentStatus.ENABLED
-        )
-        dept.updater = request.user.username
-        dept.save(update_fields=["status", "updater", "updated_at"])
-
-        # 停用数据源部门会导致其子孙部门 + 关联的租户部门被停用
-        # 但是启用时候只能恢复子孙部门，对租户部门侧没有影响（需要手动到租户侧启用）
-        self._update_descendants_data_source_depts_status(dept, request.user.username)
-        if dept.status == DataSourceDepartmentStatus.DISABLED:
-            self._disable_related_tenant_depts(dept, request.user.username)
-
-        return Response(DataSourceDepartmentSwitchStatusOutputSLZ(instance={"status": dept.status.value}).data)
-
-    def _update_descendants_data_source_depts_status(self, data_source_dept: DataSourceDepartment, operator: str):
-        """批量更新子孙部门的状态，保持与父部门一致"""
-        dept_rel = DataSourceDepartmentRelation.objects.filter(department=data_source_dept).first()
-        # 没有子孙部门，直接返回
-        if not dept_rel:
-            return
-
-        dept_ids = dept_rel.get_descendants().values_list("department_id", flat=True)
-        DataSourceDepartment.objects.filter(id__in=dept_ids).update(
-            status=data_source_dept.status, updater=operator, updated_at=timezone.now()
-        )
-
-    def _disable_related_tenant_depts(self, data_source_dept: DataSourceDepartment, operator: str):
-        """停用与被停用的数据源用户关联的租户用户"""
-        dept_ids = [data_source_dept.id]
-        if dept_rel := DataSourceDepartmentRelation.objects.filter(department=data_source_dept).first():
-            dept_ids = dept_rel.get_descendants(include_self=True).values_list("department_id", flat=True)
-
-        TenantDepartment.objects.filter(data_source_department_id__in=dept_ids).update(
-            status=TenantDepartmentStatus.DISABLED, updator=operator, updated_at=timezone.now()
-        )

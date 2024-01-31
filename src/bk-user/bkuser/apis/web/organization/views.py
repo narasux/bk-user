@@ -22,7 +22,6 @@ from rest_framework.response import Response
 from bkuser.apis.web.mixins import CurrentUserTenantMixin
 from bkuser.apis.web.organization.serializers import (
     TenantDepartmentChildrenListOutputSLZ,
-    TenantDepartmentSwitchStatusOutputSLZ,
     TenantDepartmentUserSearchInputSLZ,
     TenantListOutputSLZ,
     TenantUserListOutputSLZ,
@@ -35,7 +34,7 @@ from bkuser.apps.data_source.constants import DataSourceStatus
 from bkuser.apps.data_source.models import DataSource, DataSourceDepartmentRelation, DataSourceDepartmentUserRelation
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
-from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantStatus, TenantUserStatus
+from bkuser.apps.tenant.constants import TenantStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantDepartment, TenantUser
 from bkuser.biz.data_source import DataSourceHandler
 from bkuser.biz.data_source_organization import DataSourceDepartmentHandler
@@ -265,34 +264,6 @@ class TenantDepartmentUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
             "tenant_user_depts_map": TenantUserHandler.get_tenant_users_depts_map(tenant_dept.tenant_id, tenant_users),
         }
         return self.get_paginated_response(TenantUserListOutputSLZ(tenant_users, many=True, context=context).data)
-
-
-class TenantDepartmentSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
-    """切换租户部门状态（启/停）"""
-
-    queryset = TenantDepartment.objects.filter(
-        status__in=[TenantDepartmentStatus.ENABLED, TenantDepartmentStatus.DISABLED]
-    )
-    lookup_url_kwarg = "id"
-    permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
-    serializer_class = TenantDepartmentSwitchStatusOutputSLZ
-
-    @swagger_auto_schema(
-        tags=["tenant-organization"],
-        operation_description="变更租户部门状态",
-        responses={status.HTTP_200_OK: TenantDepartmentSwitchStatusOutputSLZ()},
-    )
-    def patch(self, request, *args, **kwargs):
-        tenant_dept = self.get_object()
-        tenant_dept.status = (
-            TenantDepartmentStatus.DISABLED
-            if tenant_dept.status == TenantDepartmentStatus.ENABLED
-            else TenantDepartmentStatus.ENABLED
-        )
-        tenant_dept.updater = request.user.username
-        tenant_dept.save(update_fields=["status", "updater", "updated_at"])
-
-        return Response(TenantDepartmentSwitchStatusOutputSLZ(instance={"status": tenant_dept.status.value}).data)
 
 
 class TenantUserRetrieveApi(generics.RetrieveAPIView):

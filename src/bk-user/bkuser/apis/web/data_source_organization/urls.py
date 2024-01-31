@@ -43,10 +43,4 @@ urlpatterns = [
         views.DataSourceUserOrganizationPathListApi.as_view(),
         name="data_source_user.organization_path.list",
     ),
-    # 切换数据源部门状态（启/停）
-    path(
-        "departments/<int:id>/operations/switch_status/",
-        views.DataSourceDepartmentSwitchStatusApi.as_view(),
-        name="data_source_department.switch_status",
-    ),
 ]
