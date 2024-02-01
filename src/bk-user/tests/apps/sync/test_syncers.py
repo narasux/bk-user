@@ -12,7 +12,7 @@ from itertools import groupby
 from typing import Dict, List, Set, Tuple
 
 import pytest
-from bkuser.apps.data_source.constants import TenantUserIdRuleEnum
+from bkuser.apps.data_source.constants import DataSourceDepartmentStatus, DataSourceUserStatus, TenantUserIdRuleEnum
 from bkuser.apps.data_source.models import (
     DataSource,
     DataSourceDepartment,
@@ -27,6 +27,7 @@ from bkuser.apps.sync.syncers import (
     TenantDepartmentSyncer,
     TenantUserSyncer,
 )
+from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantDepartment, TenantUser
 from bkuser.common.constants import PERMANENT_TIME
 from bkuser.plugins.models import RawDataSourceDepartment, RawDataSourceUser
@@ -59,7 +60,9 @@ class TestDataSourceDepartmentSyncer:
         DataSourceDepartmentSyncer(data_source_sync_task_ctx, full_local_data_source, raw_departments).sync()
 
         # 验证部门信息
-        departments = DataSourceDepartment.objects.filter(data_source=full_local_data_source)
+        departments = DataSourceDepartment.objects.filter(
+            data_source=full_local_data_source,
+        ).exclude(status=DataSourceDepartmentStatus.DELETED)
         assert departments.count() == len(raw_departments)
         assert set(departments.values_list("code", flat=True)) == {dept.code for dept in raw_departments}
         assert set(departments.values_list("name", flat=True)) == {dept.name for dept in raw_departments}
@@ -75,8 +78,10 @@ class TestDataSourceDepartmentSyncer:
         raw_departments: List[RawDataSourceDepartment] = []
         DataSourceDepartmentSyncer(data_source_sync_task_ctx, full_local_data_source, raw_departments).sync()
 
-        # 同步了空的数据，导致该数据源的所有部门，部门关系信息都被删除
-        assert not DataSourceDepartment.objects.filter(data_source=full_local_data_source).exists()
+        # 同步了空的数据，导致该数据源的所有部门被软删除，部门关系信息被删除
+        data_source_depts = DataSourceDepartment.objects.filter(data_source=full_local_data_source)
+        assert data_source_depts.exists()
+        assert not data_source_depts.exclude(status=DataSourceDepartmentStatus.DELETED).exists()
         assert not DataSourceDepartmentRelation.objects.filter(data_source=full_local_data_source).exists()
 
     @staticmethod
@@ -146,14 +151,8 @@ class TestDataSourceUserSyncer:
         raw_users[0].properties["phone"] = "13512345655"
         raw_users[0].properties["phone_country_code"] = "63"
         raw_users[0].properties["age"] = "30"
-        # 2. 修改用户的 code，会导致用户被重建
-        lisi_old_code, lisi_new_code = "lisi", "lisi-1"
-        raw_users[1].code = lisi_new_code
-        # 需要更新其他用户的信息，避免 leader 还是用旧的 Code
-        for u in raw_users:
-            if lisi_old_code in u.leaders:
-                u.leaders.remove(lisi_old_code)
-                u.leaders.append(lisi_new_code)
+        # 2. 丢弃用户 lisi
+        raw_users.pop(1)
         # 3. 再添加一个随机用户
         raw_users.append(random_raw_user)
 
@@ -173,7 +172,9 @@ class TestDataSourceUserSyncer:
             incremental=False,
         ).sync()
 
-        users = DataSourceUser.objects.filter(data_source=full_local_data_source)
+        users = DataSourceUser.objects.filter(
+            data_source=full_local_data_source,
+        ).exclude(status=DataSourceUserStatus.DELETED)
         assert set(users.values_list("code", flat=True)) == {user.code for user in raw_users}
         assert set(users.values_list("username", flat=True)) == {user.properties.get("username") for user in raw_users}
         # 验证 extras 都被更新
@@ -188,11 +189,9 @@ class TestDataSourceUserSyncer:
         assert zhangsan.phone_country_code == "63"
         assert zhangsan.extras.get("age") == 30  # noqa: PLR2004
 
-        # 验证用户被重建的情况
-        lisi = users.filter(username="lisi").first()
-        assert lisi.full_name == "李四"
-        assert lisi.email == "lisi@m.com"
-        assert lisi.code == "lisi-1"
+        # 同步导致 lisi 用户被软删除
+        lisi = DataSourceUser.objects.filter(data_source=full_local_data_source, code="lisi").first()
+        assert lisi.status == DataSourceUserStatus.DELETED
 
         # 验证用户部门信息
         assert self._gen_user_depts_from_db(users) == self._gen_user_depts_from_raw_users(raw_users)
@@ -339,7 +338,10 @@ class TestDataSourceUserSyncer:
             overwrite=True,
             incremental=False,
         ).sync()
-        assert DataSourceUser.objects.filter(data_source=full_local_data_source).count() == 0
+
+        data_source_users = DataSourceUser.objects.filter(data_source=full_local_data_source)
+        assert data_source_users.exists()
+        assert not data_source_users.exclude(status=DataSourceUserStatus.DELETED).exists()
 
     @staticmethod
     def _gen_user_leaders_from_raw_users(raw_users: List[RawDataSourceUser]) -> Dict[str, Set[str]]:
@@ -395,7 +397,7 @@ class TestTenantDepartmentSyncer:
         # 更新场景
         DataSourceDepartment.objects.filter(
             data_source=full_local_data_source, code__in=["center_ba", "group_baa"]
-        ).delete()
+        ).update(status=DataSourceDepartmentStatus.DELETED)
         DataSourceDepartment.objects.create(data_source=full_local_data_source, code="center_ac", name="中心AC")
 
         TenantDepartmentSyncer(tenant_sync_task_ctx, full_local_data_source, default_tenant).sync()
@@ -404,19 +406,25 @@ class TestTenantDepartmentSyncer:
         ) == self._gen_ds_dept_ids_with_tenant(default_tenant, full_local_data_source)
 
         # 删除场景，只会删除当前数据源关联的租户部门
-        DataSourceDepartment.objects.filter(data_source=full_local_data_source).delete()
+        DataSourceDepartment.objects.filter(
+            data_source=full_local_data_source,
+        ).update(status=DataSourceDepartmentStatus.DELETED)
         TenantDepartmentSyncer(tenant_sync_task_ctx, full_local_data_source, default_tenant).sync()
 
         tenant_depts = TenantDepartment.objects.filter(tenant=default_tenant)
-        assert tenant_depts.exists()
-        assert not tenant_depts.filter(data_source=full_local_data_source).exists()
+        # 其他数据源同步的租户部门不会被删除
+        assert tenant_depts.exclude(data_source=full_local_data_source, status=TenantDepartmentStatus.DELETED).exists()
+
+        # 只是软删除，不会真的删除
+        data_source_tenant_depts = tenant_depts.filter(data_source=full_local_data_source)
+        assert data_source_tenant_depts.exists()
+        assert not data_source_tenant_depts.exclude(status=TenantDepartmentStatus.DELETED).exists()
 
     @staticmethod
     def _gen_ds_dept_ids_with_tenant(tenant: Tenant, data_source: DataSource) -> Set[int]:
         return set(
             TenantDepartment.objects.filter(
-                tenant=tenant,
-                data_source=data_source,
+                tenant=tenant, data_source=data_source, status=DataSourceDepartmentStatus.ENABLED
             ).values_list("data_source_department_id", flat=True)
         )
 
@@ -424,7 +432,7 @@ class TestTenantDepartmentSyncer:
     def _gen_ds_dept_ids_with_data_source(data_source: DataSource) -> Set[int]:
         return set(
             DataSourceDepartment.objects.filter(
-                data_source=data_source,
+                data_source=data_source, status=DataSourceDepartmentStatus.ENABLED
             ).values_list("id", flat=True)
         )
 
@@ -484,18 +492,26 @@ class TestTenantUserSyncer:
         TenantUserSyncer(tenant_sync_task_ctx, full_local_data_source, default_tenant).sync()
 
         tenant_users = TenantUser.objects.filter(tenant=default_tenant)
-        assert tenant_users.exists()
-        assert not tenant_users.filter(data_source=full_local_data_source).exists()
+        # 其他数据源同步的租户用户不会被删除
+        assert tenant_users.exclude(data_source=full_local_data_source, status=TenantUserStatus.DELETED).exists()
+
+        # 只是软删除，不会真的删除
+        data_source_tenant_users = tenant_users.filter(data_source=full_local_data_source)
+        assert data_source_tenant_users.exists()
+        assert not data_source_tenant_users.exclude(status=TenantUserStatus.DELETED).exists()
 
     @staticmethod
     def _gen_ds_user_ids_with_tenant(tenant: Tenant, data_source: DataSource) -> Set[int]:
         return set(
-            TenantUser.objects.filter(
-                tenant=tenant,
-                data_source=data_source,
-            ).values_list("data_source_user_id", flat=True)
+            TenantUser.objects.filter(tenant=tenant, data_source=data_source)
+            .exclude(status=TenantUserStatus.DELETED)
+            .values_list("data_source_user_id", flat=True)
         )
 
     @staticmethod
     def _gen_ds_user_ids_with_data_source(data_source: DataSource) -> Set[int]:
-        return set(DataSourceUser.objects.filter(data_source=data_source).values_list("id", flat=True))
+        return set(
+            DataSourceUser.objects.filter(data_source=data_source)
+            .exclude(status=DataSourceUserStatus.DELETED)
+            .values_list("id", flat=True)
+        )

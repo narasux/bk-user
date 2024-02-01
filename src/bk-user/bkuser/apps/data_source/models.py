@@ -137,11 +137,11 @@ class DataSource(AuditedModel):
 class DataSourceUser(TimestampedModel):
     data_source = models.ForeignKey(DataSource, on_delete=models.PROTECT, db_constraint=False)
     code = models.CharField("用户标识", max_length=128, default=generate_uuid)
+    previous_status = models.CharField(
+        "上一次状态", max_length=32, choices=DataSourceUserStatus.get_choices(), default=DataSourceUserStatus.ENABLED
+    )
     status = models.CharField(
-        "用户状态",
-        max_length=32,
-        choices=DataSourceUserStatus.get_choices(),
-        default=DataSourceUserStatus.ENABLED,
+        "用户状态", max_length=32, choices=DataSourceUserStatus.get_choices(), default=DataSourceUserStatus.ENABLED
     )
 
     # ----------------------- 内置字段相关 -----------------------

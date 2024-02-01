@@ -56,6 +56,7 @@ class SyncTaskStatus(str, StructuredEnum):
     RUNNING = EnumField("running", label=_("执行中"))
     SUCCESS = EnumField("success", label=_("成功"))
     FAILED = EnumField("failed", label=_("失败"))
+    SKIPPED = EnumField("skipped", label=_("跳过"))
 
 
 class SyncOperation(str, StructuredEnum):
@@ -64,6 +65,7 @@ class SyncOperation(str, StructuredEnum):
     CREATE = EnumField("create", label=_("创建"))
     UPDATE = EnumField("update", label=_("更新"))
     DELETE = EnumField("delete", label=_("删除"))
+    RESTORE = EnumField("restore", label=_("恢复"))
 
 
 class DataSourceSyncObjectType(str, StructuredEnum):

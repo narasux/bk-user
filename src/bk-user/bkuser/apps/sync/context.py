@@ -152,6 +152,11 @@ class DataSourceSyncTaskContext:
                 self._build_user_change_logs(SyncOperation.UPDATE, updated_users), batch_size=self.batch_size
             )
 
+        if restore_users := self.recorder.get(SyncOperation.RESTORE, DataSourceSyncObjectType.USER):
+            DataSourceUserChangeLog.objects.bulk_create(
+                self._build_user_change_logs(SyncOperation.RESTORE, restore_users), batch_size=self.batch_size
+            )
+
         # 部门变更记录
         if created_depts := self.recorder.get(SyncOperation.CREATE, DataSourceSyncObjectType.DEPARTMENT):
             DataSourceDepartmentChangeLog.objects.bulk_create(
@@ -166,6 +171,11 @@ class DataSourceSyncTaskContext:
         if updated_depts := self.recorder.get(SyncOperation.UPDATE, DataSourceSyncObjectType.DEPARTMENT):
             DataSourceDepartmentChangeLog.objects.bulk_create(
                 self._build_dept_change_logs(SyncOperation.UPDATE, updated_depts), batch_size=self.batch_size
+            )
+
+        if restore_depts := self.recorder.get(SyncOperation.RESTORE, DataSourceSyncObjectType.DEPARTMENT):
+            DataSourceDepartmentChangeLog.objects.bulk_create(
+                self._build_dept_change_logs(SyncOperation.RESTORE, restore_depts), batch_size=self.batch_size
             )
 
     def _build_user_change_logs(
@@ -279,6 +289,11 @@ class TenantSyncTaskContext:
                 self._build_user_change_logs(SyncOperation.UPDATE, updated_users), batch_size=self.batch_size
             )
 
+        if restore_users := self.recorder.get(SyncOperation.RESTORE, TenantSyncObjectType.USER):
+            TenantUserChangeLog.objects.bulk_create(
+                self._build_user_change_logs(SyncOperation.RESTORE, restore_users), batch_size=self.batch_size
+            )
+
         # 部门变更记录
         if created_depts := self.recorder.get(SyncOperation.CREATE, TenantSyncObjectType.DEPARTMENT):
             TenantDepartmentChangeLog.objects.bulk_create(
@@ -293,6 +308,11 @@ class TenantSyncTaskContext:
         if updated_depts := self.recorder.get(SyncOperation.UPDATE, TenantSyncObjectType.DEPARTMENT):
             TenantDepartmentChangeLog.objects.bulk_create(
                 self._build_dept_change_logs(SyncOperation.UPDATE, updated_depts), batch_size=self.batch_size
+            )
+
+        if restore_depts := self.recorder.get(SyncOperation.RESTORE, TenantSyncObjectType.DEPARTMENT):
+            TenantDepartmentChangeLog.objects.bulk_create(
+                self._build_dept_change_logs(SyncOperation.RESTORE, restore_depts), batch_size=self.batch_size
             )
 
     def _build_user_change_logs(self, operation: SyncOperation, users: List[TenantUser]) -> List[TenantUserChangeLog]:

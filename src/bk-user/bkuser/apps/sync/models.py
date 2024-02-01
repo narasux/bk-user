@@ -45,6 +45,8 @@ class DataSourceSyncTask(TimestampedModel):
                 return _("数据源同步任务执行中")
             if self.status == SyncTaskStatus.SUCCESS:
                 return _("数据源同步成功")
+            if self.status == SyncTaskStatus.SKIPPED:
+                return _("数据源同步条件未满足，本任务已被跳过")
 
             return _("数据源同步失败，请前往 `数据更新记录` 查看日志详情")
 
@@ -112,6 +114,8 @@ class TenantSyncTask(TimestampedModel):
                 return _("租户数据同步任务执行中")
             if self.status == SyncTaskStatus.SUCCESS:
                 return _("租户数据同步成功")
+            if self.status == SyncTaskStatus.SKIPPED:
+                return _("租户数据同步条件未满足，本任务已被跳过")
 
             return _("租户数据同步失败")
 

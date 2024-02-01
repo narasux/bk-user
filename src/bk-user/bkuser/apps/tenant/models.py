@@ -57,6 +57,9 @@ class TenantUser(TimestampedModel):
     # Note: 值：对于新用户则为uuid，对于迁移则兼容旧版本 username@domain或username
     # 兼容旧版本：对外 id/username/bk_username 这3个字段，值是一样的
     id = models.CharField("蓝鲸用户对外唯一标识", primary_key=True, max_length=128)
+    previous_status = models.CharField(
+        "上一次状态", max_length=32, choices=TenantUserStatus.get_choices(), default=TenantUserStatus.ENABLED
+    )
     status = models.CharField(
         "状态", max_length=32, choices=TenantUserStatus.get_choices(), default=TenantUserStatus.ENABLED
     )

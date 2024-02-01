@@ -11,8 +11,10 @@ specific language governing permissions and limitations under the License.
 import datetime
 from typing import Dict, List, Set
 
+from django.db.models import F
 from django.utils import timezone
 
+from bkuser.apps.data_source.constants import DataSourceDepartmentStatus, DataSourceUserStatus
 from bkuser.apps.data_source.models import (
     DataSource,
     DataSourceDepartment,
@@ -26,6 +28,7 @@ from bkuser.apps.data_source.utils import gen_tenant_user_id
 from bkuser.apps.sync.constants import DataSourceSyncObjectType, SyncOperation, TenantSyncObjectType
 from bkuser.apps.sync.context import DataSourceSyncTaskContext, TenantSyncTaskContext
 from bkuser.apps.sync.converters import DataSourceUserConverter
+from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantDepartment, TenantUser, TenantUserValidityPeriodConfig
 from bkuser.common.constants import PERMANENT_TIME
 from bkuser.plugins.models import RawDataSourceDepartment, RawDataSourceUser
@@ -61,17 +64,26 @@ class DataSourceDepartmentSyncer:
 
     def _sync_departments(self):
         """数据源部门同步"""
-        dept_codes = set(
-            DataSourceDepartment.objects.filter(data_source=self.data_source).values_list("code", flat=True)
+        dept_code_status_map = dict(
+            DataSourceDepartment.objects.filter(data_source=self.data_source).values_list("code", "status")
         )
+        all_dept_codes = set(dept_code_status_map.keys())
+        exists_dept_codes = {
+            code for code, status in dept_code_status_map.items() if status != DataSourceDepartmentStatus.DELETED
+        }
+        deleted_dept_codes = all_dept_codes - exists_dept_codes
         raw_dept_codes = {dept.code for dept in self.raw_departments}
 
-        waiting_create_dept_codes = raw_dept_codes - dept_codes
-        waiting_delete_dept_codes = dept_codes - raw_dept_codes
-        waiting_update_dept_codes = dept_codes & raw_dept_codes
+        waiting_create_dept_codes = raw_dept_codes - all_dept_codes
+        waiting_restore_dept_codes = deleted_dept_codes & raw_dept_codes
+        waiting_delete_dept_codes = exists_dept_codes - raw_dept_codes
+        waiting_update_dept_codes = all_dept_codes & raw_dept_codes
 
         if waiting_delete_dept_codes:
             self._delete_departments(waiting_delete_dept_codes)
+
+        if waiting_restore_dept_codes:
+            self._restore_departments(waiting_restore_dept_codes)
 
         if waiting_create_dept_codes:
             self._create_departments([u for u in self.raw_departments if u.code in waiting_create_dept_codes])
@@ -85,7 +97,18 @@ class DataSourceDepartmentSyncer:
         self.ctx.logger.info(f"delete {len(waiting_delete_depts)} departments")  # noqa: G004
         self.ctx.recorder.add(SyncOperation.DELETE, DataSourceSyncObjectType.DEPARTMENT, waiting_delete_depts)
 
-        waiting_delete_depts.delete()
+        # 数据同步使用软删除，要完全删除数据，需要通过回收站操作
+        waiting_delete_depts.update(status=DataSourceDepartmentStatus.DELETED, updated_at=timezone.now())
+
+    def _restore_departments(self, dept_codes: Set[str]):
+        waiting_restore_depts = DataSourceDepartment.objects.filter(
+            data_source=self.data_source, code__in=dept_codes, status=DataSourceDepartmentStatus.DELETED
+        )
+        self.ctx.logger.info(f"restore {len(waiting_restore_depts)} departments")  # noqa: G004
+        self.ctx.recorder.add(SyncOperation.RESTORE, DataSourceSyncObjectType.DEPARTMENT, waiting_restore_depts)
+
+        # 批量还原已经被软删除的数据源部门
+        waiting_restore_depts.update(status=DataSourceDepartmentStatus.ENABLED, updated_at=timezone.now())
 
     def _create_departments(self, raw_departments: List[RawDataSourceDepartment]):
         departments = [
@@ -105,11 +128,11 @@ class DataSourceDepartmentSyncer:
             for dept in raw_departments
         }
 
-        may_update_departments = DataSourceDepartment.objects.filter(
+        may_update_depts = DataSourceDepartment.objects.filter(
             data_source=self.data_source, code__in=[u.code for u in raw_departments]
         )
         waiting_update_departments = []
-        for d in may_update_departments:
+        for d in may_update_depts:
             target_dept = dept_map[d.code]
             # 前后数据都一致，没有更新的必要
             if d.name == target_dept.name and d.extras == target_dept.extras:
@@ -273,15 +296,26 @@ class DataSourceUserSyncer:
             )
 
     def _sync_users(self):
-        user_codes = set(DataSourceUser.objects.filter(data_source=self.data_source).values_list("code", flat=True))
+        user_code_status_map = dict(
+            DataSourceUser.objects.filter(data_source=self.data_source).values_list("code", "status")
+        )
+        all_user_codes = set(user_code_status_map.keys())
+        exists_user_codes = {
+            code for code, status in user_code_status_map.items() if status != DataSourceUserStatus.DELETED
+        }
+        deleted_user_codes = all_user_codes - exists_user_codes
         raw_user_codes = {user.code for user in self.raw_users}
 
-        waiting_create_user_codes = raw_user_codes - user_codes
-        waiting_delete_user_codes = user_codes - raw_user_codes if not self.incremental else set()
-        waiting_update_user_codes = user_codes & raw_user_codes if self.overwrite else set()
+        waiting_create_user_codes = raw_user_codes - all_user_codes
+        waiting_restore_user_codes = deleted_user_codes & raw_user_codes
+        waiting_delete_user_codes = exists_user_codes - raw_user_codes if not self.incremental else set()
+        waiting_update_user_codes = all_user_codes & raw_user_codes if self.overwrite else set()
 
         if waiting_delete_user_codes:
             self._delete_users(waiting_delete_user_codes)
+
+        if waiting_restore_user_codes:
+            self._restore_users(waiting_restore_user_codes)
 
         if waiting_create_user_codes:
             self._create_users([u for u in self.raw_users if u.code in waiting_create_user_codes])
@@ -295,7 +329,22 @@ class DataSourceUserSyncer:
         self.ctx.logger.info(f"delete {len(waiting_delete_users)} users")  # noqa: G004
         self.ctx.recorder.add(SyncOperation.DELETE, DataSourceSyncObjectType.USER, waiting_delete_users)
 
-        waiting_delete_users.delete()
+        # 数据同步使用软删除，要完全删除数据，需要通过回收站操作
+        waiting_delete_users.update(
+            status=DataSourceUserStatus.DELETED, previous_status=F("status"), updated_at=timezone.now()
+        )
+
+    def _restore_users(self, user_codes: Set[str]):
+        waiting_restore_users = DataSourceUser.objects.filter(
+            data_source=self.data_source, code__in=user_codes, status=DataSourceUserStatus.DELETED
+        )
+        self.ctx.logger.info(f"restore {len(waiting_restore_users)} users")  # noqa: G004
+        self.ctx.recorder.add(SyncOperation.RESTORE, DataSourceSyncObjectType.USER, waiting_restore_users)
+
+        # 批量还原已经被软删除的数据源用户
+        waiting_restore_users.update(
+            status=F("previous_status"), previous_status=DataSourceUserStatus.DELETED, updated_at=timezone.now()
+        )
 
     def _create_users(self, raw_users: List[RawDataSourceUser]):
         users = [self.converter.convert(u) for u in raw_users]
@@ -460,38 +509,40 @@ class TenantDepartmentSyncer:
 
     def sync(self):
         """TODO (su) 支持协同后，同步到租户的数据有范围限制"""
-        exists_tenant_departments = TenantDepartment.objects.filter(tenant=self.tenant, data_source=self.data_source)
-        data_source_departments = DataSourceDepartment.objects.filter(data_source=self.data_source)
+        tenant_depts = TenantDepartment.objects.filter(tenant=self.tenant, data_source=self.data_source)
+        exists_tenant_depts = tenant_depts.filter(status=TenantDepartmentStatus.ENABLED)
+        deleted_tenant_depts = tenant_depts.filter(status=TenantDepartmentStatus.DELETED)
 
-        # 删除掉租户中存在的，但是数据源中不存在的
-        waiting_delete_tenant_departments = exists_tenant_departments.exclude(
-            data_source_department__in=data_source_departments
+        data_source_depts = DataSourceDepartment.objects.filter(
+            data_source=self.data_source, status=DataSourceDepartmentStatus.ENABLED
         )
-        # 记录删除日志，变更记录
-        waiting_delete_cnt = len(waiting_delete_tenant_departments)
-        self.ctx.logger.info(f"delete {waiting_delete_cnt} tenant departments")  # noqa: G004
-        self.ctx.recorder.add(SyncOperation.DELETE, TenantSyncObjectType.DEPARTMENT, waiting_delete_tenant_departments)
 
-        waiting_delete_tenant_departments.delete()
+        # 1. 软删除掉租户中存在的，但是数据源中不存在的
+        waiting_delete_tenant_depts = exists_tenant_depts.exclude(data_source_department__in=data_source_depts)
+        waiting_delete_tenant_depts.update(status=TenantDepartmentStatus.DELETED, updated_at=timezone.now())
 
-        # 数据源中存在，但是租户中不存在的，需要创建
-        waiting_sync_data_source_departments = data_source_departments.exclude(
-            id__in=[u.data_source_department_id for u in exists_tenant_departments]
+        self.ctx.logger.info(f"delete {len(waiting_delete_tenant_depts)} tenant departments")  # noqa: G004
+        self.ctx.recorder.add(SyncOperation.DELETE, TenantSyncObjectType.DEPARTMENT, waiting_delete_tenant_depts)
+
+        # 2. 处理之前被软删除的，现在因同步需要恢复的
+        waiting_restore_tenant_depts = deleted_tenant_depts.filter(data_source_department__in=data_source_depts)
+        waiting_restore_tenant_depts.update(status=TenantDepartmentStatus.ENABLED, updated_at=timezone.now())
+
+        self.ctx.logger.info(f"restore {len(waiting_restore_tenant_depts)} tenant departments")  # noqa: G004
+        self.ctx.recorder.add(SyncOperation.RESTORE, TenantSyncObjectType.DEPARTMENT, waiting_restore_tenant_depts)
+
+        # 3. 数据源中存在，但是租户中不存在的（含已经/待恢复的），需要创建
+        waiting_sync_data_source_depts = data_source_depts.exclude(
+            id__in=[dept.data_source_department_id for dept in tenant_depts]
         )
-        waiting_create_tenant_departments = [
-            TenantDepartment(
-                tenant=self.tenant,
-                data_source_department=dept,
-                data_source=self.data_source,
-            )
-            for dept in waiting_sync_data_source_departments
+        waiting_create_tenant_depts = [
+            TenantDepartment(tenant=self.tenant, data_source_department=dept, data_source=self.data_source)
+            for dept in waiting_sync_data_source_depts
         ]
-        TenantDepartment.objects.bulk_create(waiting_create_tenant_departments, batch_size=self.batch_size)
+        TenantDepartment.objects.bulk_create(waiting_create_tenant_depts, batch_size=self.batch_size)
 
-        # 记录创建日志，变更记录
-        waiting_create_cnt = len(waiting_create_tenant_departments)
-        self.ctx.logger.info(f"create {waiting_create_cnt} tenant departments")  # noqa: G004
-        self.ctx.recorder.add(SyncOperation.CREATE, TenantSyncObjectType.DEPARTMENT, waiting_create_tenant_departments)
+        self.ctx.logger.info(f"create {len(waiting_create_tenant_depts)} tenant departments")  # noqa: G004
+        self.ctx.recorder.add(SyncOperation.CREATE, TenantSyncObjectType.DEPARTMENT, waiting_create_tenant_depts)
 
 
 class TenantUserSyncer:
@@ -507,21 +558,35 @@ class TenantUserSyncer:
 
     def sync(self):
         """TODO (su) 支持协同后，同步到租户的数据有范围限制"""
-        exists_tenant_users = TenantUser.objects.filter(tenant=self.tenant, data_source=self.data_source)
-        data_source_users = DataSourceUser.objects.filter(data_source=self.data_source)
+        tenant_users = TenantUser.objects.filter(tenant=self.tenant, data_source=self.data_source)
+        exists_tenant_users = tenant_users.exclude(status=TenantUserStatus.DELETED)
+        deleted_tenant_users = tenant_users.filter(status=TenantUserStatus.DELETED)
 
-        # 删除掉租户中存在的，但是数据源中不存在的
+        data_source_users = DataSourceUser.objects.filter(
+            data_source=self.data_source,
+        ).exclude(status=DataSourceUserStatus.DELETED)
+
+        # 1. 软删除掉租户中存在的，但是数据源中不存在的
         waiting_delete_tenant_users = exists_tenant_users.exclude(data_source_user__in=data_source_users)
+        waiting_delete_tenant_users.update(
+            status=TenantUserStatus.DELETED, previous_status=F("status"), updated_at=timezone.now()
+        )
 
-        # 记录删除日志，变更记录
         self.ctx.logger.info(f"delete {len(waiting_delete_tenant_users)} tenant users")  # noqa: G004
         self.ctx.recorder.add(SyncOperation.DELETE, TenantSyncObjectType.USER, waiting_delete_tenant_users)
 
-        waiting_delete_tenant_users.delete()
+        # 2. 处理之前被软删除的，现在因同步需要恢复的
+        waiting_restore_tenant_users = deleted_tenant_users.filter(data_source_user__in=data_source_users)
+        waiting_restore_tenant_users.update(
+            status=F("previous_status"), previous_status=TenantUserStatus.DELETED, updated_at=timezone.now()
+        )
 
-        # 数据源中存在，但是租户中不存在的，需要创建
+        self.ctx.logger.info(f"restore {len(waiting_restore_tenant_users)} tenant users")  # noqa: G004
+        self.ctx.recorder.add(SyncOperation.RESTORE, TenantSyncObjectType.USER, waiting_restore_tenant_users)
+
+        # 3. 数据源中存在，但是租户中不存在的（含已经/待恢复的），需要创建
         waiting_sync_data_source_users = data_source_users.exclude(
-            id__in=[u.data_source_user_id for u in exists_tenant_users]
+            id__in=[u.data_source_user_id for u in tenant_users]
         )
         waiting_create_tenant_users = [
             TenantUser(
@@ -535,7 +600,6 @@ class TenantUserSyncer:
         ]
         TenantUser.objects.bulk_create(waiting_create_tenant_users, batch_size=self.batch_size)
 
-        # 记录创建日志，变更记录
         self.ctx.logger.info(f"create {len(waiting_create_tenant_users)} tenant users")  # noqa: G004
         self.ctx.recorder.add(SyncOperation.CREATE, TenantSyncObjectType.USER, waiting_create_tenant_users)
 

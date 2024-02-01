@@ -15,6 +15,7 @@ from django.db import transaction
 
 from bkuser.apps.data_source.constants import DataSourceStatus
 from bkuser.apps.data_source.models import DataSource
+from bkuser.apps.sync.constants import SyncTaskStatus
 from bkuser.apps.sync.context import DataSourceSyncTaskContext, TenantSyncTaskContext
 from bkuser.apps.sync.models import DataSourceSyncTask, TenantSyncTask
 from bkuser.apps.sync.signals import post_sync_data_source, post_sync_tenant
@@ -33,11 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class DataSourceSyncTaskRunner:
-    """
-    数据源同步任务执行器
-
-    TODO (su) 后续支持软删除后，需要更新同步逻辑
-    """
+    """数据源同步任务执行器"""
 
     def __init__(self, task: DataSourceSyncTask, plugin_init_extra_kwargs: Dict[str, Any]):
         self.task = task
@@ -46,6 +43,8 @@ class DataSourceSyncTaskRunner:
 
     def run(self):
         if self._need_skip_sync():
+            self.task.status = SyncTaskStatus.SKIPPED
+            self.task.save(update_fields=["status", "updated_at"])
             return
 
         with DataSourceSyncTaskContext(self.task) as ctx, transaction.atomic():
@@ -117,6 +116,8 @@ class TenantSyncTaskRunner:
 
     def run(self):
         if self._need_skip_sync():
+            self.task.status = SyncTaskStatus.SKIPPED
+            self.task.save(update_fields=["status", "updated_at"])
             return
 
         with TenantSyncTaskContext(self.task) as ctx, transaction.atomic():
