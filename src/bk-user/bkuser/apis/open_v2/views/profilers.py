@@ -33,6 +33,7 @@ from bkuser.apps.data_source.models import (
     DataSourceDepartmentUserRelation,
     DataSourceUserLeaderRelation,
 )
+from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantUserStatus
 from bkuser.apps.tenant.models import DataSourceDepartment, TenantDepartment, TenantUser
 from bkuser.biz.tenant import TenantUserHandler
 from bkuser.common.error_codes import error_codes
@@ -90,6 +91,7 @@ class TenantUserListToUserInfosMixin:
                 # TODO: 协同需要调整
                 "category_id": tenant_user.data_source_id,
                 # TODO 1. 支持软删除后需要特殊处理 2. 支持状态时需要特殊处理
+                #  su: 支持不了一点 orz，得讨论下
                 "status": "",
                 "staff_status": "",
                 "enabled": True,
@@ -135,15 +137,17 @@ class TenantUserListToUserInfosMixin:
               然后返回数据源用户在每个租户下的 Leader 信息列表
         """
         # 数据源用户 Leader 关系查询
-        relations = DataSourceUserLeaderRelation.objects.filter(user_id__in=data_source_user_ids).only(
-            "user_id", "leader_id"
-        )
+        relations = DataSourceUserLeaderRelation.objects.filter(
+            user_id__in=data_source_user_ids,
+        ).only("user_id", "leader_id")
         leader_ids = [i.leader_id for i in relations]
         if not leader_ids:
             return {}
 
         # 查询 Leader 对应的租户用户
-        leaders = TenantUser.objects.filter(data_source_user_id__in=leader_ids).select_related("data_source_user")
+        leaders = TenantUser.objects.filter(
+            status=TenantUserStatus.ENABLED, data_source_user_id__in=leader_ids
+        ).select_related("data_source_user")
         # { "数据源 Leader ID": List[租户 Leader ] }， 协同场景下，会出现一个 data_source_user 可以对应多个租户用户
         tenant_leader_map = defaultdict(list)
         for i in leaders:
@@ -169,16 +173,16 @@ class TenantUserListToUserInfosMixin:
         通过数据源用户 ID 获取其在租户下的（直属）部门 列表
         """
         # 查询用户所在的数据源部门
-        relations = DataSourceDepartmentUserRelation.objects.filter(user_id__in=data_source_user_ids).only(
-            "user_id", "department_id"
-        )
+        relations = DataSourceDepartmentUserRelation.objects.filter(
+            user_id__in=data_source_user_ids,
+        ).only("user_id", "department_id")
         department_ids = [i.department_id for i in relations]
         if not department_ids:
             return {}
 
         # 查询部门对应的租户部门
         tenant_departments = TenantDepartment.objects.filter(
-            data_source_department_id__in=department_ids
+            status=TenantDepartmentStatus.ENABLED, data_source_department_id__in=department_ids
         ).select_related("data_source_department")
         # { "数据源部门 ID": List[租户部门] } ，协同场景下，可能会出现一个数据源对应多个租户部门
         tenant_dept_map = defaultdict(list)
@@ -242,6 +246,9 @@ class ProfileListApi(LegacyOpenApiCommonMixin, generics.ListAPIView, TenantUserL
         """根据参数过滤, 生成 TenantUser QuerySet"""
         # Note: 由于对外很多字段都是继承于数据源用户字段，所以这里直接关联查询 data_source_user
         queryset = TenantUser.objects.select_related("data_source_user").distinct()
+        if not params.get("include_disabled"):
+            queryset = queryset.filter(status=TenantUserStatus.ENABLED)
+
         # 过滤查询的字段
         lookup_field = params.get("lookup_field")
         if not lookup_field:
@@ -300,6 +307,7 @@ class ProfileListApi(LegacyOpenApiCommonMixin, generics.ListAPIView, TenantUserL
             return "data_source_id"
         if lookup_field in ["enabled", "status", "staff_status"]:
             # FIXME (su) 支持 enabled / status / staff_status 参数
+            #  su: 同上，支持不了一点 orz，得讨论下
             raise error_codes.VALIDATION_ERROR.f("lookup field enabled / status / staff_status is not supported now")
 
         raise error_codes.VALIDATION_ERROR.f(f"unsupported lookup field: {lookup_field}")
@@ -354,20 +362,20 @@ class ProfileRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
         slz.is_valid(raise_exception=True)
         params = slz.validated_data
 
-        # 路径参数
         lookup_value = kwargs["lookup_value"]
-        # TODO (su) 支持软删除后需要根据 include_disabled 参数修改 filters
+        # TODO (su) 讨论 include_disabled 应该包含什么状态，目前假定是 DELETED 状态也是需要的
+        filters = {} if params["include_disabled"] else {"status": TenantUserStatus.ENABLED}
+
         if params["lookup_field"] == "username":
             # username 其实就是新的租户用户 ID，形式如 admin / admin@qq.com / uuid4
-            filters = {"id": lookup_value}
+            filters["id"] = lookup_value
         else:
             # TODO 目前 ID 指的是数据源用户 ID，未来支持协同之后，需要重新考虑
-            filters = {"data_source_user__id": lookup_value}
+            filters["data_source_user__id"] = lookup_value
 
-        # TODO (su) 支持软删除后，需要根据 include_disabled 参数判断是返回被删除的用户还是 Raise 404
         tenant_user = TenantUser.objects.select_related("data_source_user").filter(**filters).first()
         if not tenant_user:
-            raise Http404(f"user {params['lookup_field']}:{kwargs['lookup_value']} not found")
+            raise Http404(f"user {params['lookup_field']}:{lookup_value} not found")
 
         # 根据 fields 构造对外的用户信息
         user_info = self._build_user_info(tenant_user, fields=params.get("fields"))
@@ -379,25 +387,27 @@ class ProfileRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
         """获取单个租户用户的 Leader"""
         # 数据源用户 Leader 关系查询
         leader_ids = list(
-            DataSourceUserLeaderRelation.objects.filter(user=tenant_user.data_source_user).values_list(
-                "leader_id", flat=True
-            )
+            DataSourceUserLeaderRelation.objects.filter(
+                user=tenant_user.data_source_user,
+            ).values_list("leader_id", flat=True)
         )
         if not leader_ids:
             return []
 
         # 查询 Leader 对应的租户用户
         leaders = TenantUser.objects.filter(
-            tenant=tenant_user.tenant, data_source_user_id__in=leader_ids
+            tenant=tenant_user.tenant,
+            status=TenantUserStatus.ENABLED,
+            data_source_user_id__in=leader_ids,
         ).select_related("data_source_user")
 
         return [
             {
-                "id": i.data_source_user.id,
-                "username": i.id,
-                "display_name": TenantUserHandler().generate_tenant_user_display_name(i),
+                "id": ld.data_source_user.id,
+                "username": ld.id,
+                "display_name": TenantUserHandler().generate_tenant_user_display_name(ld),
             }
-            for i in leaders
+            for ld in leaders
         ]
 
     def _get_departments(self, tenant_user: TenantUser) -> List[Dict[str, Any]]:
@@ -411,7 +421,9 @@ class ProfileRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
 
         # 查询对应的租户部门
         departments = TenantDepartment.objects.filter(
-            tenant_id=tenant_user.tenant_id, data_source_department_id__in=department_ids
+            tenant_id=tenant_user.tenant_id,
+            status=TenantDepartmentStatus.ENABLED,
+            data_source_department_id__in=department_ids,
         ).select_related("data_source_department")
 
         # 部门的 full_name
@@ -464,6 +476,7 @@ class ProfileRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
             # TODO: 协同需要调整
             "category_id": tenant_user.data_source_id,
             # TODO 1. 支持软删除后需要特殊处理 2. 支持状态时需要特殊处理
+            # TODO (su) 讨论新旧状态如何转换？staff_status 迁移逻辑？
             "status": "",
             "staff_status": "",
             "enabled": True,
@@ -506,9 +519,12 @@ class DepartmentProfileListApi(LegacyOpenApiCommonMixin, generics.ListAPIView, T
         params = slz.validated_data
         no_page = params["no_page"]
 
-        # TODO (su) 支持软删除后，需要根据 include_disabled 参数判断是返回被删除的部门还是 Raise 404
-        tenant_dept = TenantDepartment.objects.filter(id=kwargs["id"]).first()
-
+        statuses = (
+            [TenantDepartmentStatus.ENABLED, TenantDepartmentStatus.DELETED]
+            if params["include_disabled"]
+            else [TenantDepartmentStatus.ENABLED]
+        )
+        tenant_dept = TenantDepartment.objects.filter(id=kwargs["id"], status__in=statuses).first()
         if not tenant_dept:
             raise Http404(f"department {kwargs['id']} not found")
 
@@ -538,13 +554,13 @@ class DepartmentProfileListApi(LegacyOpenApiCommonMixin, generics.ListAPIView, T
                 dept_ids = rel.get_descendants(include_self=True).values_list("department_id", flat=True)
 
         # 查询部门下的用户 ID 列表
-        user_ids = DataSourceDepartmentUserRelation.objects.filter(department_id__in=dept_ids).values_list(
-            "user_id", flat=True
-        )
+        user_ids = DataSourceDepartmentUserRelation.objects.filter(
+            department_id__in=dept_ids,
+        ).values_list("user_id", flat=True)
 
         # 租户用户
         return TenantUser.objects.filter(
-            tenant_id=tenant_dept.tenant_id, data_source_user_id__in=user_ids
+            tenant_id=tenant_dept.tenant_id, status=TenantUserStatus.ENABLED, data_source_user_id__in=user_ids
         ).select_related("data_source_user")
 
 
@@ -555,10 +571,9 @@ class ProfileLanguageUpdateApi(ExcludePatchAPIViewMixin, LegacyOpenApiCommonMixi
         slz = ProfileLanguageUpdateInputSLZ(data=request.data)
         slz.is_valid(raise_exception=True)
 
-        # TODO (su) 支持软删除后，这里要添加过滤条件，只支持正常用户的更新，非正常状态用户无法更新，直接 Http404
-        tenant_user = TenantUser.objects.filter(id=kwargs["username"]).first()
+        tenant_user = TenantUser.objects.filter(id=kwargs["username"], status=TenantUserStatus.ENABLED).first()
         if not tenant_user:
-            raise Http404(f"user username:{kwargs['username']} not found")
+            raise Http404(f"user username:{kwargs['username']} not found or disabled")
 
         tenant_user.language = slz.validated_data["language"]
         tenant_user.save(update_fields=["language"])

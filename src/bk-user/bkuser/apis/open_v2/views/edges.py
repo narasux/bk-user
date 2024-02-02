@@ -21,14 +21,18 @@ from bkuser.apis.open_v2.serializers.edges import (
     ProfileLeaderRelationListInputSLZ,
     ProfileLeaderRelationListOutputSLZ,
 )
+from bkuser.apps.data_source.constants import DataSourceDepartmentStatus, DataSourceUserStatus
 from bkuser.apps.data_source.models import DataSourceDepartmentUserRelation, DataSourceUserLeaderRelation
+from bkuser.apps.tenant.constants import TenantDepartmentStatus
 from bkuser.apps.tenant.models import TenantDepartment
 from bkuser.common.cache import Cache, CacheEnum, CacheKeyPrefixEnum
 
 
 class DepartmentProfileRelationListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
     pagination_class = LegacyOpenApiPagination
-    queryset = DataSourceDepartmentUserRelation.objects.only("id", "department_id", "user_id").all()
+    queryset = DataSourceDepartmentUserRelation.objects.only("id", "department_id", "user_id").filter(
+        department__status=DataSourceDepartmentStatus.ENABLED, user__status=DataSourceUserStatus.ENABLED
+    )
 
     cache_key = "list_department_profile_relations"
     cache_timeout = 60 * 10
@@ -71,6 +75,7 @@ class DepartmentProfileRelationListApi(LegacyOpenApiCommonMixin, generics.ListAP
         """将数据源部门 ID / 数据源用户 ID 转换成租户部门 ID / 租户用户 ID"""
         dept_id_map = dict(
             TenantDepartment.objects.filter(
+                status=TenantDepartmentStatus.ENABLED,
                 data_source_department_id__in=[rel["department_id"] for rel in data_source_dept_user_relations],
             ).values_list("data_source_department_id", "id")
         )
@@ -82,14 +87,15 @@ class DepartmentProfileRelationListApi(LegacyOpenApiCommonMixin, generics.ListAP
                 "profile_id": rel["profile_id"],
             }
             for rel in data_source_dept_user_relations
-            # FIXME (su) 支持软删除后需要调整逻辑
             if rel["department_id"] in dept_id_map
         ]
 
 
 class ProfileLeaderRelationListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
     pagination_class = LegacyOpenApiPagination
-    queryset = DataSourceUserLeaderRelation.objects.only("id", "user_id", "leader_id").all()
+    queryset = DataSourceUserLeaderRelation.objects.only("id", "user_id", "leader_id").filter(
+        user__status=DataSourceUserStatus.ENABLED, leader__status=DataSourceUserStatus.ENABLED
+    )
 
     cache_key = "list_profile_leader_relations"
     cache_timeout = 60 * 10

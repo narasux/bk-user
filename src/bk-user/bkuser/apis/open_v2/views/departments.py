@@ -29,6 +29,7 @@ from bkuser.apps.data_source.models import (
     DataSourceDepartmentRelation,
     DataSourceDepartmentUserRelation,
 )
+from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantUserStatus
 from bkuser.apps.tenant.models import TenantDepartment, TenantUser
 from bkuser.common.error_codes import error_codes
 from bkuser.utils.tree import Tree
@@ -128,8 +129,17 @@ class DepartmentListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
         return resp_data
 
     def _filter_queryset(self, params: Dict[str, Any]) -> QuerySet:
-        # TODO 支持软删除后需要考虑 include_disabled 参数
-        queryset = TenantDepartment.objects.select_related("data_source_department__department_relation").distinct()
+        statuses = (
+            [TenantDepartmentStatus.ENABLED, TenantDepartmentStatus.DELETED]
+            if params["include_disabled"]
+            else [TenantDepartmentStatus.ENABLED]
+        )
+
+        queryset = (
+            TenantDepartment.objects.select_related("data_source_department__department_relation")
+            .filter(status__in=statuses)
+            .distinct()
+        )
         if not params.get("lookup_field"):
             return queryset
 
@@ -140,9 +150,9 @@ class DepartmentListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
             # 在 DB 中根据 parent 过滤只能使用数据源部门 ID，这里需要特殊转换
             # 注：fuzzy_lookups 不需要特殊转换，原因是 fuzzy_lookups 只支持按 name 查询
             if lookup_field == "parent":
-                exact_lookups = TenantDepartment.objects.filter(
-                    id__in=exact_lookups,
-                ).values_list("data_source_department_id", flat=True)
+                exact_lookups = TenantDepartment.objects.filter(id__in=exact_lookups, status__in=statuses).values_list(
+                    "data_source_department_id", flat=True
+                )
 
             target_lookups = [Q(**{self._convert_lookup_field(lookup_field): x}) for x in exact_lookups]
         elif fuzzy_lookups := params.get("fuzzy_lookups"):
@@ -165,7 +175,7 @@ class DepartmentListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
         if lookup_field == "parent":
             return "data_source_department__department_relation__parent"
         if lookup_field == "enabled":
-            # FIXME 支持 enabled 参数
+            # FIXME (su) 讨论如何支持 enabled 参数？转换 lookup_value (1 -> enabled)?
             raise error_codes.VALIDATION_ERROR.f("lookup field enabled is not supported now")
         if lookup_field == "level":
             return "data_source_department__department_relation__level"
@@ -181,12 +191,17 @@ class DepartmentRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
         slz.is_valid(raise_exception=True)
         params = slz.validated_data
 
-        # TODO (su) 支持软删除后，需要根据 include_disabled 参数判断是返回被删除的部门还是 Raise 404
+        statuses = (
+            [TenantDepartmentStatus.ENABLED, TenantDepartmentStatus.DELETED]
+            if params["include_disabled"]
+            else [TenantDepartmentStatus.ENABLED]
+        )
+
         tenant_dept = (
             TenantDepartment.objects.select_related(
                 "data_source_department__department_relation",
             )
-            .filter(id=kwargs["id"])
+            .filter(id=kwargs["id"], status__in=statuses)
             .first()
         )
 
@@ -254,7 +269,10 @@ class DepartmentRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
         ]
         dept_id_map = dict(
             TenantDepartment.objects.filter(
-                data_source_department_id__in=[dept["id"] for dept in ancestors], tenant_id=tenant_dept.tenant_id
+                tenant_id=tenant_dept.tenant_id,
+                # 返回的祖先只支持状态为正常启用的
+                status=TenantDepartmentStatus.ENABLED,
+                data_source_department_id__in=[dept["id"] for dept in ancestors],
             ).values_list("data_source_department_id", "id")
         )
         # 如果 dept["id"] 不在 dept_id_map 中，说明该部门未同步成租户部门（可能是协同的部分同步的情况）
@@ -278,8 +296,10 @@ class DepartmentRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
         has_grand_child_map = {rel.parent_id: True for rel in grandchild_dept_relations}
         dept_id_map = dict(
             TenantDepartment.objects.filter(
-                data_source_department_id__in=[rel.department_id for rel in child_dept_relations],
                 tenant_id=tenant_dept.tenant_id,
+                # 返回的子孙只支持状态为正常启用的
+                status=TenantDepartmentStatus.ENABLED,
+                data_source_department_id__in=[rel.department_id for rel in child_dept_relations],
             ).values_list("data_source_department_id", "id")
         )
         return [
@@ -301,7 +321,9 @@ class DepartmentRetrieveApi(LegacyOpenApiCommonMixin, generics.RetrieveAPIView):
 
         # 父租户部门必须是同租户的
         parent_tenant_dept = TenantDepartment.objects.filter(
-            data_source_department_id=dept_relation.parent_id, tenant_id=tenant_dept.tenant_id
+            tenant_id=tenant_dept.tenant_id,
+            status=TenantDepartmentStatus.ENABLED,
+            data_source_department_id=dept_relation.parent_id,
         ).first()
         if not parent_tenant_dept:
             return None
@@ -324,8 +346,9 @@ class DepartmentChildrenListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
     pagination_class = LegacyOpenApiPagination
 
     def get(self, request, *args, **kwargs):
-        # TODO (su) 支持软删除后，需要根据 include_disabled 参数判断是返回被删除的部门还是 Raise 404?
-        tenant_dept = TenantDepartment.objects.filter(id=kwargs["lookup_value"]).first()
+        tenant_dept = TenantDepartment.objects.filter(
+            id=kwargs["lookup_value"], status=TenantDepartmentStatus.ENABLED
+        ).first()
         if not tenant_dept:
             raise Http404(f"department {kwargs['lookup_value']} not found")
 
@@ -335,8 +358,9 @@ class DepartmentChildrenListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
 
         dept_id_map = dict(
             TenantDepartment.objects.filter(
-                data_source_department_id__in=[rel.department_id for rel in dept_relations],
                 tenant_id=tenant_dept.tenant_id,
+                status=TenantDepartmentStatus.ENABLED,
+                data_source_department_id__in=[rel.department_id for rel in dept_relations],
             ).values_list("data_source_department_id", "id")
         )
 
@@ -358,17 +382,20 @@ class ProfileDepartmentListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
         slz.is_valid(raise_exception=True)
         params = slz.validated_data
 
-        # TODO (su) 支持软删除后需要根据 include_disabled 参数修改 filters
+        lookup_value = kwargs["lookup_value"]
+        # TODO (su) 讨论 include_disabled 应该包含什么状态，目前假定是 DELETED 状态也是需要的
+        filters = {} if params["include_disabled"] else {"status": TenantUserStatus.ENABLED}
+
         if params["lookup_field"] == "username":
             # username 其实就是新的租户用户 ID，形式如 admin / admin@qq.com / uuid4
-            filters = {"id": kwargs["lookup_value"]}
+            filters["id"] = lookup_value
         else:
             # TODO 目前 ID 指的是数据源用户 ID，未来支持协同之后，需要重新考虑
-            filters = {"data_source_user__id": kwargs["lookup_value"]}
+            filters["data_source_user__id"] = lookup_value
 
         tenant_user = TenantUser.objects.select_related("data_source_user").filter(**filters).first()
         if not tenant_user:
-            raise Http404(f"user {params['lookup_field']}:{kwargs['lookup_value']} not found")
+            raise Http404(f"user {params['lookup_field']}:{lookup_value} not found")
 
         with_ancestors = params["with_ancestors"] or params["with_family"]
         return Response(self._get_user_dept_infos(tenant_user, with_ancestors=with_ancestors))
@@ -385,7 +412,9 @@ class ProfileDepartmentListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
 
         dept_id_map = dict(
             TenantDepartment.objects.filter(
-                data_source_department__in=departments, tenant_id=tenant_user.tenant_id
+                tenant_id=tenant_user.tenant_id,
+                status=TenantDepartmentStatus.ENABLED,
+                data_source_department__in=departments,
             ).values_list("data_source_department_id", "id")
         )
         user_dept_infos = []
@@ -416,7 +445,9 @@ class ProfileDepartmentListApi(LegacyOpenApiCommonMixin, generics.ListAPIView):
         ancestors = dept_relation.get_ancestors().select_related("department")
         dept_id_map = dict(
             TenantDepartment.objects.filter(
-                data_source_department_id__in=[rel.department_id for rel in ancestors], tenant_id=tenant_id
+                tenant_id=tenant_id,
+                status=TenantDepartmentStatus.ENABLED,
+                data_source_department_id__in=[rel.department_id for rel in ancestors],
             ).values_list("data_source_department_id", "id")
         )
         ancestor_count = ancestors.count()
