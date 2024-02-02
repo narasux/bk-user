@@ -18,6 +18,7 @@ from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from bkuser.apps.data_source.constants import DataSourceDepartmentStatus, DataSourceUserStatus
 from bkuser.apps.data_source.models import (
     DataSourceDepartment,
     DataSourceDepartmentUserRelation,
@@ -90,6 +91,7 @@ def _validate_unique_and_required(
 
     if field.unique:
         # 唯一性检查，由于添加 / 修改用户一般不会有并发操作，因此这里没有对并发的情况进行预防
+        # 与 DB 限制的唯一性索引一致，软删除数据也会参与到唯一性检查中
         queryset = DataSourceUser.objects.filter(data_source_id=data_source_id, **{f"extras__{field.name}": value})
         if data_source_user_id:
             queryset = queryset.exclude(id=data_source_user_id)
@@ -177,11 +179,15 @@ class UserCreateInputSLZ(serializers.Serializer):
     def validate_department_ids(self, department_ids):
         diff_department_ids = set(department_ids) - set(
             DataSourceDepartment.objects.filter(
-                id__in=department_ids, data_source_id=self.context["data_source_id"]
-            ).values_list("id", flat=True)
+                id__in=department_ids,
+                data_source_id=self.context["data_source_id"],
+            )
+            .exclude(status=DataSourceDepartmentStatus.DELETED)
+            .values_list("id", flat=True)
         )
         if diff_department_ids:
             raise ValidationError(_("传递了错误的部门信息: {}").format(diff_department_ids))
+
         return department_ids
 
     def validate_leader_ids(self, leader_ids):
@@ -189,10 +195,13 @@ class UserCreateInputSLZ(serializers.Serializer):
             DataSourceUser.objects.filter(
                 id__in=leader_ids,
                 data_source_id=self.context["data_source_id"],
-            ).values_list("id", flat=True)
+            )
+            .exclude(status=DataSourceUserStatus.DELETED)
+            .values_list("id", flat=True)
         )
         if diff_leader_ids:
             raise ValidationError(_("传递了错误的上级信息: {}").format(diff_leader_ids))
+
         return leader_ids
 
     def validate_extras(self, extras: Dict[str, Any]) -> Dict[str, Any]:
@@ -284,18 +293,25 @@ class UserUpdateInputSLZ(serializers.Serializer):
     def validate_department_ids(self, department_ids):
         diff_department_ids = set(department_ids) - set(
             DataSourceDepartment.objects.filter(
-                id__in=department_ids, data_source_id=self.context["data_source_id"]
-            ).values_list("id", flat=True)
+                id__in=department_ids,
+                data_source_id=self.context["data_source_id"],
+            )
+            .exclude(status=DataSourceDepartmentStatus.DELETED)
+            .values_list("id", flat=True)
         )
         if diff_department_ids:
             raise ValidationError(_("传递了错误的部门信息: {}").format(diff_department_ids))
+
         return department_ids
 
     def validate_leader_ids(self, leader_ids):
         diff_leader_ids = set(leader_ids) - set(
             DataSourceUser.objects.filter(
-                id__in=leader_ids, data_source_id=self.context["data_source_id"]
-            ).values_list("id", flat=True)
+                id__in=leader_ids,
+                data_source_id=self.context["data_source_id"],
+            )
+            .exclude(status=DataSourceUserStatus.DELETED)
+            .values_list("id", flat=True)
         )
         if diff_leader_ids:
             raise ValidationError(_("传递了错误的上级信息: {}").format(diff_leader_ids))

@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 
 from django.db.models import Q
 
+from bkuser.apps.data_source.constants import DataSourceUserStatus
 from bkuser.apps.data_source.models import DataSourceUser
 from bkuser.apps.idp.data_models import DataSourceMatchRule
 from bkuser.apps.idp.models import Idp
@@ -45,8 +46,11 @@ class AuthenticationMatcher:
 
         if not conditions:
             return []
+
         # 查询数据源用户
-        return DataSourceUser.objects.filter(reduce(operator.or_, conditions)).values_list("id", flat=True)
+        return DataSourceUser.objects.filter(
+            reduce(operator.or_, conditions), status=DataSourceUserStatus.ENABLED
+        ).values_list("id", flat=True)
 
     def _convert_rules_to_queryset_filter(self, source_data: Dict[str, Any]) -> Q | None:
         """

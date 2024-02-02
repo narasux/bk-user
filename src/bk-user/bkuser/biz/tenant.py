@@ -27,7 +27,11 @@ from bkuser.apps.data_source.models import (
 )
 from bkuser.apps.data_source.utils import gen_tenant_user_id
 from bkuser.apps.sync.tasks import initialize_identity_info_and_send_notification
-from bkuser.apps.tenant.constants import DEFAULT_TENANT_USER_VALIDITY_PERIOD_CONFIG
+from bkuser.apps.tenant.constants import (
+    DEFAULT_TENANT_USER_VALIDITY_PERIOD_CONFIG,
+    TenantDepartmentStatus,
+    TenantUserStatus,
+)
 from bkuser.apps.tenant.models import (
     Tenant,
     TenantDepartment,
@@ -127,7 +131,12 @@ class TenantUserHandler:
         """
         if not tenant_user_ids:
             return []
-        tenant_users = TenantUser.objects.select_related("data_source_user").filter(id__in=tenant_user_ids)
+
+        tenant_users = (
+            TenantUser.objects.select_related("data_source_user")
+            .filter(id__in=tenant_user_ids)
+            .exclude(status=TenantUserStatus.DELETED)
+        )
 
         # 返回租户用户本身信息和对应数据源用户信息
         data = []
@@ -162,10 +171,14 @@ class TenantUserHandler:
         if not relations.exists():
             return []
 
-        leaders = TenantUser.objects.filter(
-            data_source_user_id__in=[rel.leader_id for rel in relations],
-            tenant_id=tenant_user.tenant_id,
-        ).select_related("data_source_user")
+        leaders = (
+            TenantUser.objects.filter(
+                data_source_user_id__in=[rel.leader_id for rel in relations],
+                tenant_id=tenant_user.tenant_id,
+            )
+            .exclude(status=TenantUserStatus.DELETED)
+            .select_related("data_source_user")
+        )
 
         return [
             TenantUserLeaderInfo(
@@ -188,7 +201,9 @@ class TenantUserHandler:
         # {数据源部门 ID: 租户部门信息(id, name)}
         data_source_dept_id_tenant_dept_info_map = {
             dept.data_source_department_id: TenantDepartmentInfo(id=dept.id, name=dept.data_source_department.name)
-            for dept in TenantDepartment.objects.filter(tenant_id=tenant_id).select_related("data_source_department")
+            for dept in TenantDepartment.objects.filter(
+                tenant_id=tenant_id, status=TenantDepartmentStatus.ENABLED
+            ).select_related("data_source_department")
         }
 
         data_source_user_ids = [u.data_source_user_id for u in tenant_users]
@@ -235,7 +250,9 @@ class TenantUserHandler:
         # 1. 尝试从 TenantUser 表根据表达式渲染出展示用名称
         display_name_map = {
             user.id: TenantUserHandler.generate_tenant_user_display_name(user)
-            for user in TenantUser.objects.select_related("data_source_user").filter(id__in=tenant_user_ids)
+            for user in TenantUser.objects.select_related("data_source_user")
+            .filter(id__in=tenant_user_ids)
+            .exclude(status=TenantUserStatus.DELETED)
         }
         # 2. 针对可能出现的 TenantUser 中被删除的 user_id，尝试从 User 表获取展示用名称（登录过就有记录）
         if not_exists_user_ids := set(tenant_user_ids) - set(display_name_map.keys()):
@@ -345,6 +362,7 @@ class TenantDepartmentHandler:
         )
         sub_tenant_depts = TenantDepartment.objects.filter(
             tenant=tenant_dept.tenant,
+            status=TenantDepartmentStatus.ENABLED,
             data_source_department_id__in=sub_data_source_dept_ids,
         ).select_related("data_source_department")
         # 子部门的子部门（孙子部门）信息

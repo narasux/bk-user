@@ -20,7 +20,7 @@ from bkuser.apps.data_source.constants import DataSourceStatus
 from bkuser.apps.data_source.models import DataSource, DataSourceUser, LocalDataSourceIdentityInfo
 from bkuser.apps.notification.constants import NotificationScene
 from bkuser.apps.notification.notifier import TenantUserNotifier
-from bkuser.apps.tenant.constants import TenantStatus
+from bkuser.apps.tenant.constants import TenantStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantUser, TenantUserValidityPeriodConfig
 from bkuser.celery import app
 from bkuser.common.task import BaseTask
@@ -66,7 +66,10 @@ def notify_password_expiring_users(data_source_id: int):
         logger.info("data source %s not user need password expiring notification, skip notify...", data_source_id)
         return
 
-    tenant_users = TenantUser.objects.filter(data_source_user_id__in=identity_infos.values_list("user_id", flat=True))
+    tenant_users = TenantUser.objects.filter(
+        status=TenantUserStatus.ENABLED,
+        data_source_user_id__in=identity_infos.values_list("user_id", flat=True),
+    )
     logger.info(
         "data source %s send password expiring notification to %d users...", data_source_id, tenant_users.count()
     )
@@ -101,7 +104,10 @@ def notify_password_expired_users(data_source_id: int):
         logger.info("data source %s not user password expired today, skip notify...", data_source_id)
         return
 
-    tenant_users = TenantUser.objects.filter(data_source_user_id__in=identity_infos.values_list("user_id", flat=True))
+    tenant_users = TenantUser.objects.filter(
+        status=TenantUserStatus.ENABLED,
+        data_source_user_id__in=identity_infos.values_list("user_id", flat=True),
+    )
     logger.info(
         "data source %s send password expired notification to %d users...", data_source_id, tenant_users.count()
     )
@@ -142,7 +148,7 @@ def notify_expiring_tenant_users(tenant_id: str):
             Q(account_expired_at__gt=expired_at, account_expired_at__lte=expired_at + timedelta(days=1))
         )
 
-    tenant_users = tenant_users.filter(reduce(operator.or_, expired_date_filters))
+    tenant_users = tenant_users.filter(reduce(operator.or_, expired_date_filters), status=TenantUserStatus.ENABLED)
     if not tenant_users.exists():
         logger.info("tenant %s not tenant user need expiring notification, skip notify...", tenant_id)
         return
@@ -175,7 +181,11 @@ def notify_expired_tenant_users(tenant_id: str):
     #    但是 MySQL 中默认是只有 SYSTEM 时区的，转换会失败（NULL），导致查询不到任何有效值
     #    ref: https://docs.djangoproject.com/en/dev/ref/models/querysets/#date
     tenant_users = TenantUser.objects.filter(
-        tenant_id=tenant_id, account_expired_at__gt=midnight - timedelta(days=1), account_expired_at__lte=midnight
+        tenant_id=tenant_id,
+        account_expired_at__gt=midnight - timedelta(days=1),
+        account_expired_at__lte=midnight,
+        # 已经停用/软删除的不需要过期提醒，若更新状态为过期的定时任务未执行，则状态可能是正常，因此这里过滤两种状态
+        status__in=[TenantUserStatus.ENABLED, TenantUserStatus.EXPIRED],
     )
     if not tenant_users.exists():
         logger.info("tenant %s not tenant user expired today, skip notify...", tenant_id)

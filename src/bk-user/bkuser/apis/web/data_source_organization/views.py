@@ -11,7 +11,7 @@ specific language governing permissions and limitations under the License.
 from collections import defaultdict
 from typing import List
 
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from drf_yasg.utils import swagger_auto_schema
@@ -77,10 +77,7 @@ class DataSourceUserListCreateApi(CurrentUserTenantMixin, generics.ListCreateAPI
         if not data_source:
             raise error_codes.DATA_SOURCE_NOT_EXISTS
 
-        queryset = DataSourceUser.objects.filter(
-            data_source=data_source,
-            status__in=[DataSourceUserStatus.ENABLED, DataSourceUserStatus.DISABLED],
-        )
+        queryset = DataSourceUser.objects.filter(data_source=data_source).exclude(status=DataSourceUserStatus.DELETED)
         if username := data.get("username"):
             queryset = queryset.filter(username__icontains=username)
 
@@ -168,7 +165,7 @@ class DataSourceLeadersListApi(CurrentUserTenantMixin, generics.ListAPIView):
             raise error_codes.DATA_SOURCE_NOT_ENABLED
 
         # 数据源用户即使被停用，也是允许被设置为其他人的 Leader 滴
-        queryset = DataSourceUser.objects.filter(data_source=data_source)
+        queryset = DataSourceUser.objects.filter(data_source=data_source).exclude(status=DataSourceUserStatus.DELETED)
         if keyword := data.get("keyword"):
             queryset = queryset.filter(Q(username__icontains=keyword) | Q(full_name__icontains=keyword))
 
@@ -221,7 +218,7 @@ class DataSourceDepartmentsListApi(CurrentUserTenantMixin, generics.ListAPIView)
 class DataSourceUserRetrieveUpdateDestroyApi(
     CurrentUserTenantMixin, ExcludePatchAPIViewMixin, generics.RetrieveUpdateDestroyAPIView
 ):
-    queryset = DataSourceUser.objects.all()
+    queryset = DataSourceUser.objects.exclude(status=DataSourceUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
     serializer_class = UserRetrieveOutputSLZ
@@ -242,8 +239,11 @@ class DataSourceUserRetrieveUpdateDestroyApi(
     )
     def put(self, request, *args, **kwargs):
         user = self.get_object()
+        if user.status != DataSourceUserStatus.ENABLED:
+            raise error_codes.DATA_SOURCE_USER_UPDATE_FAILED.f(_("只能更新已经启用的数据源用户"))
+
         if not user.data_source.is_local:
-            raise error_codes.DATA_SOURCE_USER_UPDATE_FAILED
+            raise error_codes.DATA_SOURCE_USER_UPDATE_FAILED.f(_("只能更新本地数据源用户"))
 
         slz = UserUpdateInputSLZ(
             data=request.data,
@@ -285,20 +285,24 @@ class DataSourceUserRetrieveUpdateDestroyApi(
         if not data_source_user.data_source.is_local:
             raise error_codes.DATA_SOURCE_USER_DELETE_FAILED.f("仅可删除本地数据源用户")
 
+        data_source_user.previous_status = data_source_user.status
         data_source_user.status = DataSourceUserStatus.DELETED
         data_source_user.updater = request.user.username
         data_source_user.save(update_fields=["status", "updater", "updated_at"])
 
         # 关联的租户用户也一并标记为软删除
         TenantUser.objects.filter(data_source_user=data_source_user).update(
-            status=TenantUserStatus.DELETED, updater=request.user.username, updated_at=timezone.now()
+            status=TenantUserStatus.DELETED,
+            previous_status=F("status"),
+            updater=request.user.username,
+            updated_at=timezone.now(),
         )
 
 
 class DataSourceUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
     """切换数据源用户状态（启/停）"""
 
-    queryset = DataSourceUser.objects.filter(status__in=[DataSourceUserStatus.ENABLED, DataSourceUserStatus.DISABLED])
+    queryset = DataSourceUser.objects.exclude(status=DataSourceUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
     serializer_class = DataSourceUserSwitchStatusOutputSLZ
@@ -310,13 +314,14 @@ class DataSourceUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIVi
     )
     def patch(self, request, *args, **kwargs):
         user = self.get_object()
+        user.previous_status = user.status
         user.status = (
             DataSourceUserStatus.DISABLED
             if user.status == DataSourceUserStatus.ENABLED
             else DataSourceUserStatus.ENABLED
         )
         user.updater = request.user.username
-        user.save(update_fields=["status", "updater", "updated_at"])
+        user.save(update_fields=["status", "previous_status", "updater", "updated_at"])
 
         # 停用数据源用户会导致其关联的租户用户被停用，但是启用则不会影响，需要到租户用户侧手动启用
         if user.status == DataSourceUserStatus.DISABLED:
@@ -326,8 +331,8 @@ class DataSourceUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIVi
 
     def _disable_related_tenant_users(self, data_source_user: DataSourceUser, operator: str):
         """停用与被停用的数据源用户关联的租户用户"""
-        TenantUser.objects.filter(data_source_user=data_source_user).update(
-            status=TenantUserStatus.DISABLED, updator=operator, updated_at=timezone.now()
+        TenantUser.objects.filter(data_source_user=data_source_user).exclude(status=TenantUserStatus.DELETED).update(
+            status=TenantUserStatus.DISABLED, previous_status=F("status"), updator=operator, updated_at=timezone.now()
         )
 
 
@@ -375,7 +380,7 @@ class DataSourceUserPasswordResetApi(ExcludePatchAPIViewMixin, generics.UpdateAP
 
 
 class DataSourceUserOrganizationPathListApi(generics.ListAPIView):
-    queryset = DataSourceUser.objects.all()
+    queryset = DataSourceUser.objects.exclude(status=DataSourceUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
 

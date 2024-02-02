@@ -18,6 +18,7 @@ from openpyxl.styles.numbers import FORMAT_TEXT
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from bkuser.apps.data_source.constants import DataSourceDepartmentStatus, DataSourceUserStatus
 from bkuser.apps.data_source.models import (
     DataSource,
     DataSourceDepartment,
@@ -42,7 +43,9 @@ class DataSourceUserExporter:
 
     def __init__(self, data_source: DataSource):
         self.data_source = data_source
-        self.users = DataSourceUser.objects.filter(data_source=data_source)
+        self.users = DataSourceUser.objects.filter(
+            data_source=data_source,
+        ).exclude(status=DataSourceUserStatus.DELETED)
         self.custom_fields = TenantUserCustomField.objects.filter(tenant_id=data_source.owner_tenant_id)
         self._load_template()
 
@@ -152,7 +155,9 @@ class DataSourceUserExporter:
         :returns: {dept_id: organization} 例如：{1: "总公司", 2: "总公司/深圳总部"}
         """
         dept_name_map = dict(
-            DataSourceDepartment.objects.filter(data_source=self.data_source).values_list("id", "name")
+            DataSourceDepartment.objects.filter(data_source=self.data_source)
+            .exclude(status=DataSourceDepartmentStatus.DELETED)
+            .values_list("id", "name")
         )
         relations = DataSourceDepartmentRelation.objects.filter(data_source=self.data_source)
 

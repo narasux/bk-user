@@ -13,6 +13,7 @@ from typing import List
 from pydantic import BaseModel
 
 from bkuser.apps.natural_user.models import DataSourceUserNaturalUserRelation
+from bkuser.apps.tenant.constants import TenantUserStatus
 from bkuser.apps.tenant.models import TenantUser
 from bkuser.common.error_codes import error_codes
 
@@ -32,7 +33,7 @@ class NatureUserHandler:
         1. 未绑定自然人，则返回（伪）自然人=>租户用户的对应信息，及其对应的数据源用户id
         2. 绑定了自然人，返回自然人数据，及其绑定的数据用户id列表
         """
-        tenant_user = TenantUser.objects.filter(id=tenant_user_id).first()
+        tenant_user = TenantUser.objects.filter(id=tenant_user_id).exclude(status=TenantUserStatus.DELETED).first()
         if not tenant_user:
             raise error_codes.TENANT_USER_NOT_EXIST
 

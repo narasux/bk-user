@@ -398,7 +398,9 @@ class DataSourceUserSyncer:
 
     def _sync_user_leader_relations(self):
         """同步用户 Leader 关系"""
-        exists_users = DataSourceUser.objects.filter(data_source=self.data_source)
+        exists_users = DataSourceUser.objects.filter(
+            data_source=self.data_source,
+        ).exclude(status=DataSourceUserStatus.DELETED)
         # 此时已经完成了用户数据的同步，可以认为 DB 中 DataSourceUser 的数据是最新的，准确的
         user_code_id_map = {u.code: u.id for u in exists_users}
         # 最终需要的 [(user_code, leader_code)] 集合
@@ -446,7 +448,9 @@ class DataSourceUserSyncer:
 
     def _sync_user_department_relations(self):
         """同步用户部门关系"""
-        exists_users = DataSourceUser.objects.filter(data_source=self.data_source)
+        exists_users = DataSourceUser.objects.filter(
+            data_source=self.data_source,
+        ).exclude(status=DataSourceUserStatus.DELETED)
         # 此时已经完成了用户，部门数据的同步，可以认为 DB 中 DataSourceUser & Department 的数据是最新的，准确的
         user_code_id_map = {u.code: u.id for u in exists_users}
         department_code_id_map = {

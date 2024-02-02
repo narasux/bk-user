@@ -33,7 +33,7 @@ from bkuser.apps.data_source.constants import DataSourceStatus
 from bkuser.apps.data_source.models import DataSource
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
-from bkuser.apps.tenant.constants import TenantStatus
+from bkuser.apps.tenant.constants import TenantStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantManager, TenantUser
 from bkuser.biz.tenant import (
     TenantEditableInfo,
@@ -219,7 +219,10 @@ class TenantUsersListApi(generics.ListAPIView):
         slz.is_valid(raise_exception=True)
         data = slz.validated_data
 
-        queryset = TenantUser.objects.select_related("data_source_user").filter(tenant_id=tenant_id)
+        # 该 API 主要是为了提供租户用户以供添加租户管理员，则租户用户状态应该是正常
+        queryset = TenantUser.objects.select_related("data_source_user").filter(
+            tenant_id=tenant_id, status=TenantUserStatus.ENABLED
+        )
         if keyword := data.get("keyword"):
             queryset = queryset.filter(
                 Q(data_source_user__username__icontains=keyword) | Q(data_source_user__full_name__icontains=keyword)

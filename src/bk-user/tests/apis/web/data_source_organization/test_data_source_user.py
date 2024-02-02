@@ -63,7 +63,9 @@ class TestDataSourceUserWithCustomField:
         data_source_user.extras = extras
         data_source_user.save()
 
-        response = api_client.get(reverse("data_source_user.retrieve_update", kwargs={"id": data_source_user.id}))
+        response = api_client.get(
+            reverse("data_source_user.retrieve_update_destroy", kwargs={"id": data_source_user.id})
+        )
         assert response.status_code == status.HTTP_200_OK
         assert response.data["extras"] == extras
 
@@ -82,7 +84,7 @@ class TestDataSourceUserWithCustomField:
         }
 
         response = api_client.put(
-            reverse("data_source_user.retrieve_update", kwargs={"id": random_data_source_user.id}),
+            reverse("data_source_user.retrieve_update_destroy", kwargs={"id": random_data_source_user.id}),
             data=update_user_data,
         )
         assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -248,6 +250,6 @@ class TestDataSourceUserWithCustomField:
             "extras": invalid_extras,
         }
         response = api_client.put(
-            reverse("data_source_user.retrieve_update", kwargs={"id": data_source_user.id}), data=update_data
+            reverse("data_source_user.retrieve_update_destroy", kwargs={"id": data_source_user.id}), data=update_data
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST

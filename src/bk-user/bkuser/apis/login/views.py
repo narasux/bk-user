@@ -20,7 +20,7 @@ from bkuser.apps.global_setting.constants import GlobalSettingEnum
 from bkuser.apps.global_setting.models import GlobalSetting
 from bkuser.apps.idp.constants import IdpStatus
 from bkuser.apps.idp.models import Idp
-from bkuser.apps.tenant.constants import TenantStatus
+from bkuser.apps.tenant.constants import TenantStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantUser
 from bkuser.biz.idp import AuthenticationMatcher
 from bkuser.common.error_codes import error_codes
@@ -173,7 +173,7 @@ class TenantUserMatchApi(LoginApiAccessControlMixin, generics.CreateAPIView):
 
         # 查询租户用户
         tenant_users = TenantUser.objects.filter(
-            tenant_id=tenant_id, data_source_user_id__in=list(data_source_user_ids)
+            tenant_id=tenant_id, data_source_user_id__in=list(data_source_user_ids), status=TenantUserStatus.ENABLED
         ).select_related("data_source_user")
 
         return Response(TenantUserMatchOutputSLZ(instance=tenant_users, many=True).data)
@@ -181,5 +181,5 @@ class TenantUserMatchApi(LoginApiAccessControlMixin, generics.CreateAPIView):
 
 class TenantUserRetrieveApi(LoginApiAccessControlMixin, generics.RetrieveAPIView):
     serializer_class = TenantUserRetrieveOutputSLZ
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.filter(status=TenantUserStatus.ENABLED)
     lookup_field = "id"

@@ -28,7 +28,7 @@ from bkuser.apis.web.personal_center.serializers import (
 )
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
-from bkuser.apps.tenant.constants import UserFieldDataType
+from bkuser.apps.tenant.constants import TenantUserStatus, UserFieldDataType
 from bkuser.apps.tenant.models import TenantUser, TenantUserCustomField, UserBuiltinField
 from bkuser.biz.data_source_organization import DataSourceUserHandler
 from bkuser.biz.natural_user import NatureUserHandler
@@ -49,11 +49,14 @@ class NaturalUserTenantUserListApi(generics.ListAPIView):
     def get(self, request, *args, **kwargs):
         current_tenant_user_id = request.user.username
 
-        # 获取当前登录的租户用户的自然人:两种情况绑定、未绑定，在函数中做处理
+        # 获取当前登录的租户用户的自然人: 两种情况绑定、未绑定，在函数中做处理
         nature_user = NatureUserHandler.get_nature_user_by_tenant_user_id(current_tenant_user_id)
 
-        tenant_users = TenantUser.objects.select_related("data_source_user").filter(
-            data_source_user_id__in=nature_user.data_source_user_ids
+        # 停用 / 已过期的租户用户也可以提供，但是无法进行修改
+        tenant_users = (
+            TenantUser.objects.select_related("data_source_user")
+            .filter(data_source_user_id__in=nature_user.data_source_user_ids)
+            .exclude(status=TenantUserStatus.DELETED)
         )
 
         # 将当前登录置顶
@@ -80,7 +83,7 @@ class NaturalUserTenantUserListApi(generics.ListAPIView):
 
 
 class TenantUserRetrieveApi(generics.RetrieveAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
 
@@ -103,7 +106,7 @@ class TenantUserRetrieveApi(generics.RetrieveAPIView):
 
 
 class TenantUserLogoUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
 
@@ -119,6 +122,9 @@ class TenantUserLogoUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
         data = slz.validated_data
 
         tenant_user = self.get_object()
+        if tenant_user.status != TenantUserStatus.ENABLED:
+            raise error_codes.TENANT_USER_NOT_ENABLED.f(_("该租户用户未启用，无法更新"))
+
         data_source_user = tenant_user.data_source_user
         data_source_user.logo = data["logo"]
         data_source_user.save(update_fields=["logo", "updated_at"])
@@ -126,7 +132,7 @@ class TenantUserLogoUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
 
 
 class TenantUserPhoneUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
 
@@ -141,17 +147,21 @@ class TenantUserPhoneUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView)
         slz.is_valid(raise_exception=True)
         data = slz.validated_data
 
+        tenant_user = self.get_object()
+        if tenant_user.status != TenantUserStatus.ENABLED:
+            raise error_codes.TENANT_USER_NOT_ENABLED.f(_("该租户用户未启用，无法更新"))
+
         phone_info = TenantUserPhoneInfo(
             is_inherited_phone=data["is_inherited_phone"],
             custom_phone=data.get("custom_phone", ""),
             custom_phone_country_code=data["custom_phone_country_code"],
         )
-        TenantUserHandler.update_tenant_user_phone(self.get_object(), phone_info)
+        TenantUserHandler.update_tenant_user_phone(tenant_user, phone_info)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TenantUserEmailUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
 
@@ -166,16 +176,20 @@ class TenantUserEmailUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView)
         slz.is_valid(raise_exception=True)
         data = slz.validated_data
 
+        tenant_user = self.get_object()
+        if tenant_user.status != TenantUserStatus.ENABLED:
+            raise error_codes.TENANT_USER_NOT_ENABLED.f(_("该租户用户未启用，无法更新"))
+
         email_info = TenantUserEmailInfo(
             is_inherited_email=data["is_inherited_email"],
             custom_email=data.get("custom_email", ""),
         )
-        TenantUserHandler.update_tenant_user_email(self.get_object(), email_info)
+        TenantUserHandler.update_tenant_user_email(tenant_user, email_info)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TenantUserExtrasUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
 
@@ -187,8 +201,10 @@ class TenantUserExtrasUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView
     )
     def put(self, request, *args, **kwargs):
         tenant_user = self.get_object()
-        data_source_user = tenant_user.data_source_user
+        if tenant_user.status != TenantUserStatus.ENABLED:
+            raise error_codes.TENANT_USER_NOT_ENABLED.f(_("该租户用户未启用，无法更新"))
 
+        data_source_user = tenant_user.data_source_user
         slz = TenantUserExtrasUpdateInputSLZ(
             data=request.data,
             context={
@@ -206,7 +222,7 @@ class TenantUserExtrasUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView
 
 
 class TenantUserFieldListApi(generics.ListAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     pagination_class = None
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
@@ -238,7 +254,7 @@ class TenantUserFieldListApi(generics.ListAPIView):
 
 
 class TenantUserPasswordUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.USE_PLATFORM)]
 
@@ -250,6 +266,9 @@ class TenantUserPasswordUpdateApi(ExcludePatchAPIViewMixin, generics.UpdateAPIVi
     )
     def put(self, request, *args, **kwargs):
         tenant_user = self.get_object()
+        if tenant_user.status != TenantUserStatus.ENABLED:
+            raise error_codes.TENANT_USER_NOT_ENABLED.f(_("该租户用户未启用，无法重置密码"))
+
         data_source_user = tenant_user.data_source_user
         data_source = data_source_user.data_source
         plugin_config = data_source.get_plugin_cfg()

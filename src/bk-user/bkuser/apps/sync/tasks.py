@@ -18,6 +18,7 @@ from bkuser.apps.notification.constants import NotificationScene
 from bkuser.apps.notification.notifier import TenantUserNotifier
 from bkuser.apps.sync.models import DataSourceSyncTask, TenantSyncTask
 from bkuser.apps.sync.runners import DataSourceSyncTaskRunner, TenantSyncTaskRunner
+from bkuser.apps.tenant.constants import TenantUserStatus
 from bkuser.apps.tenant.models import TenantUser
 from bkuser.celery import app
 from bkuser.common.task import BaseTask
@@ -61,8 +62,11 @@ def initialize_identity_info_and_send_notification(data_source_id: int):
 
     # 逐一发送通知（邮件/短信），只会通知给非协同产生的租户用户
     tenant_users = TenantUser.objects.filter(
-        tenant_id=data_source.owner_tenant_id, data_source_user__in=data_source_users
+        tenant_id=data_source.owner_tenant_id,
+        status=TenantUserStatus.ENABLED,
+        data_source_user__in=data_source_users,
     ).select_related("data_source_user")
+
     TenantUserNotifier(
         NotificationScene.USER_INITIALIZE,
         data_source_id=data_source.id,

@@ -34,7 +34,7 @@ from bkuser.apps.data_source.constants import DataSourceStatus
 from bkuser.apps.data_source.models import DataSource, DataSourceDepartmentRelation, DataSourceDepartmentUserRelation
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
-from bkuser.apps.tenant.constants import TenantStatus, TenantUserStatus
+from bkuser.apps.tenant.constants import TenantDepartmentStatus, TenantStatus, TenantUserStatus
 from bkuser.apps.tenant.models import Tenant, TenantDepartment, TenantUser
 from bkuser.biz.data_source import DataSourceHandler
 from bkuser.biz.data_source_organization import DataSourceDepartmentHandler
@@ -65,7 +65,7 @@ class TenantListApi(CurrentUserTenantMixin, generics.ListAPIView):
         # TODO 目前只有当前用户登录的租户，后续需要考虑跨租户协同的情况
         tenant_ids = [cur_tenant_id]
 
-        tenants = Tenant.objects.filter(id__in=tenant_ids, status__in=[TenantStatus.ENABLED, TenantStatus.DISABLED])
+        tenants = Tenant.objects.filter(id__in=tenant_ids).exclude(status=TenantStatus.DELETED)
         # 将当前登录用户所在的租户置顶
         tenants = sorted(tenants, key=lambda t: t.id != cur_tenant_id)
 
@@ -80,6 +80,7 @@ class TenantListApi(CurrentUserTenantMixin, generics.ListAPIView):
         # 指定租户 ID，可以确保即使跨租户协同，也是在指定的协同范围内的
         root_tenant_depts = TenantDepartment.objects.filter(
             tenant_id=cur_tenant_id,
+            status=TenantDepartmentStatus.ENABLED,
             data_source_department_id__in=root_data_source_dept_ids,
         ).select_related("data_source_department")
 
@@ -142,7 +143,7 @@ class TenantRetrieveUpdateApi(ExcludePatchAPIViewMixin, CurrentUserTenantMixin, 
 
 
 class TenantUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
     serializer_class = TenantUserListOutputSLZ
@@ -165,6 +166,7 @@ class TenantUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
         # FIXME (su) 协同获得的租户用户，也不一定就是该租户拥有的数据源部门的，需要根据所属数据源所属租户做区分
         tenant_users = (
             TenantUser.objects.filter(tenant_id=cur_tenant_id, data_source__in=data_sources)
+            .exclude(status=TenantUserStatus.DELETED)
             .select_related("data_source_user")
             .order_by("data_source_user__username")
         )
@@ -187,7 +189,9 @@ class TenantDepartmentChildrenListApi(CurrentUserTenantMixin, generics.ListAPIVi
     lookup_url_kwarg = "id"
 
     def get_queryset(self):
-        return TenantDepartment.objects.filter(tenant_id=self.get_current_tenant_id())
+        return TenantDepartment.objects.filter(
+            tenant_id=self.get_current_tenant_id(), status=TenantDepartmentStatus.ENABLED
+        )
 
     @swagger_auto_schema(
         tags=["tenant-organization"],
@@ -209,13 +213,13 @@ class TenantDepartmentChildrenListApi(CurrentUserTenantMixin, generics.ListAPIVi
 
 
 class TenantDepartmentUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
-    queryset = TenantUser.objects.all()
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
 
     def get_queryset(self):
-        cur_tenant_id = self.get_current_tenant_id()
-        return TenantDepartment.objects.filter(tenant_id=cur_tenant_id).select_related("data_source_department")
+        return TenantDepartment.objects.filter(
+            tenant_id=self.get_current_tenant_id(), status=TenantDepartmentStatus.ENABLED
+        ).select_related("data_source_department")
 
     @swagger_auto_schema(
         tags=["tenant-organization"],
@@ -250,6 +254,7 @@ class TenantDepartmentUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
         tenant_users = (
             # 指定租户 ID，可以确保即使跨租户协同，也是在指定的协同范围内的
             TenantUser.objects.filter(tenant=tenant_dept.tenant, data_source_user_id__in=data_source_user_ids)
+            .exclude(status=TenantUserStatus.DELETED)
             .select_related("data_source_user")
             .order_by("data_source_user__username")
         )
@@ -267,7 +272,7 @@ class TenantDepartmentUserListApi(CurrentUserTenantMixin, generics.ListAPIView):
 
 
 class TenantUserRetrieveApi(generics.RetrieveAPIView):
-    queryset = TenantUser.objects.all()
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
     serializer_class = TenantUserRetrieveOutputSLZ
@@ -284,9 +289,7 @@ class TenantUserRetrieveApi(generics.RetrieveAPIView):
 class TenantUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
     """切换租户用户状态（启/停）"""
 
-    queryset = TenantUser.objects.filter(
-        status__in=[TenantUserStatus.ENABLED, TenantUserStatus.DISABLED, TenantUserStatus.EXPIRED]
-    )
+    queryset = TenantUser.objects.exclude(status=TenantUserStatus.DELETED)
     lookup_url_kwarg = "id"
     permission_classes = [IsAuthenticated, perm_class(PermAction.MANAGE_TENANT)]
     serializer_class = TenantUserSwitchStatusOutputSLZ
@@ -298,6 +301,7 @@ class TenantUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
     )
     def patch(self, request, *args, **kwargs):
         tenant_user = self.get_object()
+        tenant_user.previous_status = tenant_user.status
         # 正常 / 过期的租户用户都可以停用
         if tenant_user.status in [TenantUserStatus.ENABLED, TenantUserStatus.EXPIRED]:
             tenant_user.status = TenantUserStatus.DISABLED
@@ -309,6 +313,6 @@ class TenantUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
                 tenant_user.status = TenantUserStatus.ENABLED
 
         tenant_user.updater = request.user.username
-        tenant_user.save(update_fields=["status", "updater", "updated_at"])
+        tenant_user.save(update_fields=["status", "previous_status", "updater", "updated_at"])
 
         return Response(TenantUserSwitchStatusOutputSLZ(instance={"status": tenant_user.status.value}).data)

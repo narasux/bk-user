@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple
 
 from django.utils import timezone
 
+from bkuser.apps.data_source.constants import DataSourceUserStatus
 from bkuser.apps.data_source.models import DataSource, DataSourceUser, LocalDataSourceIdentityInfo
 from bkuser.common.constants import PERMANENT_TIME
 from bkuser.common.hashers import make_password
@@ -73,8 +74,9 @@ class LocalDataSourceIdentityInfoInitializer:
             data_source=self.data_source,
         ).values_list("user_id", flat=True)
 
+        # 仅初始化处于启用状态的用户即可（刚创建应该不会立即禁用）
         waiting_init_users = DataSourceUser.objects.filter(
-            data_source=self.data_source,
+            data_source=self.data_source, status=DataSourceUserStatus.ENABLED
         ).exclude(id__in=exists_info_user_ids)
 
         if not waiting_init_users:

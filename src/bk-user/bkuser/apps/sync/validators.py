@@ -33,6 +33,7 @@ class DataSourceUserExtrasUniqueValidator:
             )
 
         user_extras_map = dict(
+            # 与 DB 限制的唯一性索引一致，软删除数据也会参与到唯一性检查中
             DataSourceUser.objects.filter(data_source=self.data_source).values_list("username", "extras")
         )
         for f in unique_custom_fields:

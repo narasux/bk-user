@@ -151,8 +151,10 @@ class TestDataSourceUserSyncer:
         raw_users[0].properties["phone"] = "13512345655"
         raw_users[0].properties["phone_country_code"] = "63"
         raw_users[0].properties["age"] = "30"
-        # 2. 丢弃用户 lisi
+        # 2. 丢弃用户 lisi，也不要保留 leader 信息
         raw_users.pop(1)
+        for u in raw_users:
+            u.leaders = [ld for ld in u.leaders if ld != "lisi"]
         # 3. 再添加一个随机用户
         raw_users.append(random_raw_user)
 
