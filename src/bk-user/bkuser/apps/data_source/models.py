@@ -134,7 +134,7 @@ class DataSource(AuditedModel):
         self.save(update_fields=["plugin_config", "updated_at"])
 
 
-class DataSourceUser(TimestampedModel):
+class DataSourceUser(AuditedModel):
     data_source = models.ForeignKey(DataSource, on_delete=models.PROTECT, db_constraint=False)
     code = models.CharField("用户标识", max_length=128, default=generate_uuid)
     previous_status = models.CharField(

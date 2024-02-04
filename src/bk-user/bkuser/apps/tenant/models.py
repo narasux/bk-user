@@ -43,7 +43,7 @@ class Tenant(AuditedModel):
         return self.feature_flags.get(ff, default_flags[ff])
 
 
-class TenantUser(TimestampedModel):
+class TenantUser(AuditedModel):
     """
     租户用户即蓝鲸用户
     """

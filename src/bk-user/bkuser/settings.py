@@ -258,6 +258,11 @@ CELERYBEAT_SCHEDULE = {
         "task": "bkuser.apps.notification.tasks.build_and_run_notify_password_expired_users_task",
         "schedule": crontab(minute="30", hour="10"),
     },
+    "periodic_expire_tenant_users": {
+        "task": "bkuser.apps.tenant.tasks.build_and_run_expire_tenant_users_task",
+        # 设置用户状态为过期，无需发送通知，因此放在凌晨执行
+        "schedule": crontab(minute="30", hour="0"),
+    },
 }
 # Celery 消息队列配置
 CELERY_BROKER_URL = env.str("BK_BROKER_URL", default="")
