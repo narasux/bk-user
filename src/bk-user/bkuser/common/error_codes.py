@@ -85,6 +85,7 @@ class ErrorCodes:
     DATA_SOURCE_USER_UPDATE_FAILED = ErrorCode(_("该数据源用户不支持更新"))
     DATA_SOURCE_USER_DELETE_FAILED = ErrorCode(_("该数据源用户不支持删除"))
     DATA_SOURCE_USER_ALREADY_EXISTED = ErrorCode(_("数据源用户已存在"))
+    DATA_SOURCE_USER_NOT_ENABLED = ErrorCode(_("数据源用户不存在或未启用"))
     DATA_SOURCE_SYNC_TASK_CREATE_FAILED = ErrorCode(_("创建数据源同步任务失败"))
 
     # 认证源
@@ -103,7 +104,7 @@ class ErrorCodes:
     # 租户用户
     BIND_TENANT_USER_FAILED = ErrorCode(_("数据源用户绑定租户失败"))
     TENANT_USER_NOT_EXIST = ErrorCode(_("无法找到对应租户用户"))
-    TENANT_USER_NOT_ENABLED = ErrorCode(_("该租户用户不支持更新"))
+    TENANT_USER_NOT_ENABLED = ErrorCode(_("租户用户不存在或未启用"))
 
 
 # 实例化一个全局对象

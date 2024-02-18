@@ -30,7 +30,7 @@ from bkuser.apis.web.organization.serializers import (
     TenantUserSwitchStatusOutputSLZ,
 )
 from bkuser.apis.web.tenant.serializers import TenantRetrieveOutputSLZ, TenantUpdateInputSLZ
-from bkuser.apps.data_source.constants import DataSourceStatus
+from bkuser.apps.data_source.constants import DataSourceStatus, DataSourceUserStatus
 from bkuser.apps.data_source.models import DataSource, DataSourceDepartmentRelation, DataSourceDepartmentUserRelation
 from bkuser.apps.permission.constants import PermAction
 from bkuser.apps.permission.permissions import perm_class
@@ -305,8 +305,12 @@ class TenantUserSwitchStatusApi(ExcludePutAPIViewMixin, generics.UpdateAPIView):
         # 正常 / 过期的租户用户都可以停用
         if tenant_user.status in [TenantUserStatus.ENABLED, TenantUserStatus.EXPIRED]:
             tenant_user.status = TenantUserStatus.DISABLED
-        # 启用的时候需要根据租户有效期判断，如果过期则转换为过期，否则转换为正常
         elif tenant_user.status == TenantUserStatus.DISABLED:
+            # 如果关联的数据源用户没有启用，则该租户用户也不能启用
+            if tenant_user.data_source_user.status != DataSourceUserStatus.ENABLED:
+                raise error_codes.DATA_SOURCE_USER_NOT_ENABLED.f(_("该租户用户无法启用"))
+
+            # 启用的时候需要根据租户有效期判断，如果过期则转换为过期，否则转换为正常
             if timezone.now() > tenant_user.account_expired_at:
                 tenant_user.status = TenantUserStatus.EXPIRED
             else:
